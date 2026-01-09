@@ -1,0 +1,191 @@
+{
+  "name": "Lead Generation Pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/pipeline/run",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"dry_run\": {{ $json.dry_run || true }},\n  \"enrichment_mode\": \"{{ $json.enrichment_mode || 'offline' }}\",\n  \"lead_count\": {{ $json.lead_count || 200 }},\n  \"channel\": \"{{ $json.channel || 'both' }}\"\n}"
+      },
+      "name": "Run Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/metrics",
+        "method": "GET",
+        "options": {}
+      },
+      "name": "Get Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.pipeline_running }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Check If Running",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "seconds"
+      },
+      "name": "Wait for Completion",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/metrics",
+        "method": "GET",
+        "options": {}
+      },
+      "name": "Get Final Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/leads",
+        "method": "GET",
+        "qs": {
+          "limit": 50
+        },
+        "options": {}
+      },
+      "name": "Get Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Run Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Get Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Metrics": {
+      "main": [
+        [
+          {
+            "node": "Check If Running",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Running": {
+      "main": [
+        [
+          {
+            "node": "Wait for Completion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Final Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Completion": {
+      "main": [
+        [
+          {
+            "node": "Get Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Final Metrics": {
+      "main": [
+        [
+          {
+            "node": "Get Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-08T00:00:00.000Z",
+  "versionId": "1"
+}

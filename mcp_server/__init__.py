@@ -1,0 +1,3 @@
+"""
+Initialize MCP server package.
+"""
