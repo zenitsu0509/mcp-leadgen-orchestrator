@@ -278,6 +278,7 @@ Leads are tracked through these statuses:
 - **External Lead Sources**: Facebook Lead Ads, Google Sheets
 - **FastAPI**: Python web framework
 - **Next.js**: React framework
+<<<<<<< HEAD
 
 ## 🔐 Security Notes
 
@@ -299,3 +300,6 @@ This is a take-home assignment project. For production use, consider adding:
 - Multi-tenant support
 - Export functionality
 - Advanced targeting rules
+=======
+- **Mailhog** (optional): Local SMTP testing server
+>>>>>>> fa841c566d114e3f6a9ac7a552f183d3b5d724a6
