@@ -9,7 +9,7 @@ Before you begin, ensure you have the following installed:
 - **Python 3.10 or higher** - [Download Python](https://www.python.org/downloads/)
 - **Node.js 18 or higher** - [Download Node.js](https://nodejs.org/)
 - **Git** (optional) - [Download Git](https://git-scm.com/downloads/)
-- **n8n** - Already running on port 5678
+- **n8n** - Remote self-hosted instance at https://92e249f97c50.ngrok-free.app
 
 ## Step 1: Get a Groq API Key
 

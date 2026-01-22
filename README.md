@@ -36,8 +36,9 @@ A full-stack lead generation and outreach automation system built with Model Con
 
 - Python 3.10+
 - Node.js 18+
-- n8n (running on port 5678)
+- n8n (remote self-hosted instance)
 - Groq API key (free tier available at https://console.groq.com)
+- ngrok account (free tier available at https://ngrok.com)
 
 ## 🚀 Quick Start
 
@@ -88,7 +89,7 @@ python backend/database.py
 ### 6. Start the Services
 
 **Terminal 1 - MCP Server:**
-```bash
+```bash 
 python mcp_server/server.py
 ```
 
@@ -107,7 +108,18 @@ npm run dev
 - **Frontend Dashboard**: http://localhost:3000
 - **API Backend**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
-- **n8n Editor**: http://localhost:5678
+- **n8n Editor**: Your remote n8n instance URL
+
+### 8. Setup ngrok Tunnel
+
+To connect your local API with the remote n8n instance:
+
+```bash
+# In a new terminal, start ngrok
+ngrok http 8000
+```
+
+Copy the ngrok URL (e.g., `https://abc123.ngrok-free.app`) and update your n8n workflow nodes to use this URL.
 
 ## 📁 Project Structure
 
@@ -165,42 +177,86 @@ SMTP_PASSWORD=your_app_password  # Use Gmail App Password
 
 ## 🎮 Usage
 
-### Running the Pipeline
+### How the System Works
 
-1. Open the frontend dashboard at http://localhost:3000
-2. Toggle "Dry Run" mode if you want to test without sending
-3. Click "Run Pipeline" button
-4. Monitor progress in real-time
+The system now operates through automated triggers from external sources:
+
+1. **Lead Capture**:
+   - **Google Sheets**: Add a new row with lead information
+   - **Facebook Lead Ads**: User submits an instant form
+   
+2. **Automatic Processing**:
+   - n8n detects the new lead from trigger
+   - Processes and normalizes the lead data
+   - Sends to your local API via ngrok
+   - API enriches the lead with AI insights
+   - Generates personalized messages
+   - Sends outreach (email/LinkedIn)
+
+3. **Monitor Progress**:
+   - Open frontend dashboard at http://localhost:3000
+   - View real-time metrics and lead status
+   - Check enrichment data and generated messages
 
 ### Pipeline Stages
 
-1. **Generate Leads** → Creates 200+ realistic leads
-2. **Enrich Leads** → Adds company insights and personas
+1. **Process Lead** → Receives and validates external lead data
+2. **Enrich Lead** → Adds AI-generated company insights and personas
 3. **Generate Messages** → Creates personalized email + LinkedIn DM
-4. **Send Outreach** → Delivers messages (or logs in dry-run)
+4. **Send Outreach** → Delivers messages (or logs in dry-run mode)
 
-### n8n Workflow
+### Testing with Sample Data
 
-Access n8n at http://localhost:5678 to view and modify the orchestration workflow.
+Add a test lead to your Google Sheet with:
+- **Name**: John Smith
+- **Email**: john.smith@company.com
+- **Phone**: +1-555-0123
+- **Job Title**: VP of Sales
+- **Company**: TechCorp Solutions
+
+The n8n workflow will automatically detect and process it.
+
+### n8n Workflow Setup
+
+1. **Access your n8n instance** (remote self-hosted)
+2. **Import the workflow**: Navigate to n8n and import `n8n/n8n-workflow.json`
+3. **Configure triggers**:
+   - **Google Sheets Trigger**: Connect your Google account and select the spreadsheet with lead data
+     - Required columns: name, email, phone, job_title, company
+   - **Facebook Lead Ads Trigger**: Connect your Facebook account and select the form
+4. **Update API endpoints**: Replace placeholder URLs in all HTTP Request nodes with your ngrok URL:
+   - Run Pipeline: `https://YOUR-NGROK-URL.ngrok-free.app/pipeline/run`
+   - Get Metrics: `https://YOUR-NGROK-URL.ngrok-free.app/metrics`
+   - Get Leads: `https://YOUR-NGROK-URL.ngrok-free.app/leads`
+5. **Activate the workflow**
 
 ## 🧪 Testing
 
-### Generate Sample Leads Only
+### Test Lead Processing
 
 ```bash
 python backend/lead_generator.py
 ```
 
-### Test Enrichment
+### Test API Endpoint
 
 ```bash
-python backend/enrichment.py
-```
-
-### Test Message Generation
-
-```bash
-python backend/messaging.py
+curl -X POST http://localhost:8000/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dry_run": true,
+    "enrichment_mode": "offline",
+    "lead_count": 200,
+    "channel": "both",
+    "lead_data": {
+      "name": "Jane Doe",
+      "email": "jane@example.com",
+      "phone": "+1-555-0199",
+      "job_title": "CTO",
+      "company": "Innovation Labs",
+      "source": "test"
+    }
+  }'
 ```
 
 ## 📊 Database Schema
@@ -218,10 +274,18 @@ Leads are tracked through these statuses:
 - **Groq**: Free tier LLM API (100 requests/minute)
 - **SQLite**: Local database (no limits)
 - **n8n**: Self-hosted open-source (free)
-- **Faker**: Python library for realistic data generation
+- **ngrok**: Free tier for tunneling (https://ngrok.com)
+- **External Lead Sources**: Facebook Lead Ads, Google Sheets
 - **FastAPI**: Python web framework
 - **Next.js**: React framework
-- **Mailhog** (optional): Local SMTP testing server
+
+## 🔐 Security Notes
+
+- Keep your ngrok URL private - it exposes your local API
+- Rotate ngrok URLs regularly (free tier URLs change on restart)
+- Use environment variables for sensitive data
+- Enable authentication on n8n in production
+- Never commit `.env` files to version control
 
 ## 📝 License
 

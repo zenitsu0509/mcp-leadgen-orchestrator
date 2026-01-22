@@ -29,3 +29,7 @@ class Config:
     # API
     API_PORT = int(os.getenv("API_PORT", "8000"))
     FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", "3000"))
+    
+    # n8n Configuration
+    N8N_URL = os.getenv("N8N_URL", "https://92e249f97c50.ngrok-free.app")
+    N8N_WORKFLOW_ID = os.getenv("N8N_WORKFLOW_ID", "Dl9AKWe6K3mx3qUO2q-VJ")

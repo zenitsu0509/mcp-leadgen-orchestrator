@@ -2,24 +2,100 @@
   "name": "Lead Generation Pipeline",
   "nodes": [
     {
-      "parameters": {},
-      "name": "Manual Trigger",
-      "type": "n8n-nodes-base.manualTrigger",
+      "parameters": {
+        "eventsUi": {
+          "eventValues": [
+            {
+              "name": "leadgen"
+            }
+          ]
+        }
+      },
+      "name": "Facebook Lead Ads Trigger",
+      "type": "n8n-nodes-base.facebookTrigger",
       "typeVersion": 1,
-      "position": [250, 300]
+      "position": [250, 250],
+      "webhookId": "facebook-leadgen-webhook"
     },
     {
       "parameters": {
-        "url": "http://localhost:8000/pipeline/run",
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "options": {}
+      },
+      "name": "Google Sheets Trigger",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 2,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract lead data from Facebook Lead Ads or Google Sheets\nconst items = [];\n\nfor (const item of $input.all()) {\n  let leadData = {};\n  const data = item.json;\n  \n  // Check if data is from Facebook Lead Ads\n  if (data.leadgen_id || data.form_id) {\n    const fieldData = data.field_data || [];\n    leadData = {\n      name: fieldData.find(f => f.name === 'full_name')?.values?.[0] || data.name || '',\n      email: fieldData.find(f => f.name === 'email')?.values?.[0] || data.email || '',\n      phone: fieldData.find(f => f.name === 'phone_number')?.values?.[0] || data.phone || '',\n      job_title: fieldData.find(f => f.name === 'job_title')?.values?.[0] || data.job_title || '',\n      company: fieldData.find(f => f.name === 'company_name')?.values?.[0] || data.company || '',\n      source: 'facebook'\n    };\n  } \n  // Check if data is from Google Sheets\n  else {\n    // Google Sheets data comes as direct properties\n    // Assuming columns: name, email, phone, job_title, company\n    leadData = {\n      name: data.name || data.Name || data.full_name || data['Full Name'] || '',\n      email: data.email || data.Email || '',\n      phone: data.phone || data.Phone || data.phone_number || data['Phone Number'] || '',\n      job_title: data.job_title || data['Job Title'] || data.title || data.Title || '',\n      company: data.company || data.Company || data.company_name || data['Company Name'] || '',\n      source: 'google_sheets'\n    };\n  }\n  \n  items.push({ json: leadData });\n}\n\nreturn items;"
+      },
+      "name": "Process Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 325]
+    },
+    {
+      "parameters": {
+        "url": "https://marcelino-insecure-staci.ngrok-free.dev/pipeline/run",
         "method": "POST",
-        "jsonParameters": true,
-        "options": {},
-        "bodyParametersJson": "={\n  \"dry_run\": {{ $json.dry_run || true }},\n  \"enrichment_mode\": \"{{ $json.enrichment_mode || 'offline' }}\",\n  \"lead_count\": {{ $json.lead_count || 200 }},\n  \"channel\": \"{{ $json.channel || 'both' }}\"\n}"
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "dry_run",
+              "value": "=false"
+            },
+            {
+              "name": "enrichment_mode",
+              "value": "=offline"
+            },
+            {
+              "name": "lead_count",
+              "value": "=200"
+            },
+            {
+              "name": "channel",
+              "value": "=both"
+            },
+            {
+              "name": "lead_data",
+              "value": "={{ { \"name\": $json.name, \"email\": $json.email, \"phone\": $json.phone, \"job_title\": $json.job_title, \"company\": $json.company, \"source\": $json.source } }}"
+            }
+          ]
+        },
+        "options": {}
       },
       "name": "Run Pipeline",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [450, 300]
+      "position": [650, 325]
     },
     {
       "parameters": {
@@ -29,18 +105,27 @@
       "name": "Wait",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1,
-      "position": [650, 300]
+      "position": [850, 325]
     },
     {
       "parameters": {
-        "url": "http://localhost:8000/metrics",
+        "url": "https://marcelino-insecure-staci.ngrok-free.dev/metrics",
         "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
         "options": {}
       },
       "name": "Get Metrics",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [850, 300]
+      "position": [1050, 325]
     },
     {
       "parameters": {
@@ -56,7 +141,7 @@
       "name": "Check If Running",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [1050, 300]
+      "position": [1250, 325]
     },
     {
       "parameters": {
@@ -66,23 +151,41 @@
       "name": "Wait for Completion",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1,
-      "position": [1250, 200]
+      "position": [1450, 225]
     },
     {
       "parameters": {
-        "url": "http://localhost:8000/metrics",
+        "url": "https://marcelino-insecure-staci.ngrok-free.dev/metrics",
         "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
         "options": {}
       },
       "name": "Get Final Metrics",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1250, 400]
+      "position": [1450, 425]
     },
     {
       "parameters": {
-        "url": "http://localhost:8000/leads",
+        "url": "https://marcelino-insecure-staci.ngrok-free.dev/leads",
         "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
         "qs": {
           "limit": 50
         },
@@ -91,11 +194,33 @@
       "name": "Get Leads",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1450, 400]
+      "position": [1650, 425]
     }
   ],
   "connections": {
-    "Manual Trigger": {
+    "Facebook Lead Ads Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Lead Data": {
       "main": [
         [
           {

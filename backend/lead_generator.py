@@ -1,93 +1,18 @@
 """
-Lead generator using Faker to create realistic, valid leads.
-Generates 200+ leads with consistent, industry-appropriate data.
+Lead processor for handling leads from external sources (Facebook Lead Ads, Google Forms).
+Processes and validates lead data.
 """
-from faker import Faker
-import random
-from typing import List, Dict
+from typing import List, Dict, Optional
 import re
 
 
 class LeadGenerator:
-    def __init__(self, seed: int = 42):
+    def __init__(self):
         """
-        Initialize lead generator with seed for reproducibility.
-        
-        Args:
-            seed: Random seed for reproducible lead generation
+        Initialize lead generator for processing external lead data.
         """
-        self.fake = Faker()
-        Faker.seed(seed)
-        random.seed(seed)
-        
-        # Industry-specific data
-        self.industries = {
-            "Technology": {
-                "companies": ["TechCorp", "DataSystems", "CloudVentures", "AIInnovate", "CyberSolutions"],
-                "roles": ["VP of Engineering", "CTO", "Head of IT", "Director of Technology", "Chief Data Officer"],
-                "domains": ["tech", "software", "cloud", "data", "ai"]
-            },
-            "Manufacturing": {
-                "companies": ["IndustrialWorks", "ManufactureHub", "PrecisionParts", "AutoAssembly", "ProduceMakers"],
-                "roles": ["VP of Operations", "COO", "Plant Manager", "Supply Chain Director", "Operations Manager"],
-                "domains": ["manufacturing", "industrial", "production", "assembly", "factory"]
-            },
-            "Healthcare": {
-                "companies": ["MedicalCare", "HealthSystems", "WellnessGroup", "CareProviders", "HealthTech"],
-                "roles": ["Chief Medical Officer", "VP of Operations", "Hospital Administrator", "Director of IT", "Head of Procurement"],
-                "domains": ["health", "medical", "care", "wellness", "hospital"]
-            },
-            "Retail": {
-                "companies": ["RetailCo", "ShopSmart", "MarketPlace", "ConsumerGoods", "TradeCenter"],
-                "roles": ["VP of Sales", "Retail Operations Director", "Merchandising Manager", "Store Operations VP", "Chief Retail Officer"],
-                "domains": ["retail", "shop", "store", "market", "consumer"]
-            },
-            "Finance": {
-                "companies": ["FinanceHub", "BankingGroup", "InvestCorp", "CapitalSolutions", "WealthManagement"],
-                "roles": ["CFO", "VP of Finance", "Treasury Director", "Risk Management Director", "Chief Investment Officer"],
-                "domains": ["finance", "banking", "invest", "capital", "wealth"]
-            },
-            "Logistics": {
-                "companies": ["LogiTrans", "ShipFast", "SupplyChainPro", "FreightMasters", "DeliveryHub"],
-                "roles": ["VP of Logistics", "Supply Chain Director", "Operations Manager", "Distribution VP", "Fleet Manager"],
-                "domains": ["logistics", "transport", "supply", "freight", "delivery"]
-            }
-        }
-        
-        self.countries = [
-            "United States", "United Kingdom", "Canada", "Germany", "France",
-            "Australia", "Netherlands", "Singapore", "Sweden", "Switzerland"
-        ]
-    
-    def _generate_company_email(self, first_name: str, last_name: str, company_name: str, industry_data: Dict) -> str:
-        """Generate a realistic company email address"""
-        # Clean company name for domain
-        clean_company = re.sub(r'[^a-zA-Z0-9]', '', company_name).lower()
-        domain_suffix = random.choice(industry_data["domains"])
-        
-        email_formats = [
-            f"{first_name.lower()}.{last_name.lower()}@{clean_company}.com",
-            f"{first_name.lower()[0]}{last_name.lower()}@{clean_company}.com",
-            f"{first_name.lower()}@{clean_company}.com",
-        ]
-        
-        return random.choice(email_formats)
-    
-    def _generate_linkedin_url(self, first_name: str, last_name: str) -> str:
-        """Generate a valid LinkedIn URL"""
-        name_part = f"{first_name.lower()}-{last_name.lower()}"
-        # Add random numbers sometimes (realistic LinkedIn URLs)
-        if random.random() > 0.7:
-            name_part += f"-{random.randint(100, 999)}"
-        return f"https://www.linkedin.com/in/{name_part}"
-    
-    def _generate_company_website(self, company_name: str, industry_data: Dict) -> str:
-        """Generate a valid company website"""
-        clean_company = re.sub(r'[^a-zA-Z0-9]', '', company_name).lower()
-        
-        extensions = [".com", ".io", ".co", ".net"]
-        return f"https://www.{clean_company}{random.choice(extensions)}"
-    
+        pass
+
     def _validate_email(self, email: str) -> bool:
         """Validate email format"""
         pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
@@ -97,68 +22,92 @@ class LeadGenerator:
         """Validate URL format"""
         pattern = r'^https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
         return bool(re.match(pattern, url))
+
+    def _generate_linkedin_url(self, full_name: str) -> str:
+        """Generate a LinkedIn URL from full name"""
+        name_part = full_name.lower().replace(' ', '-')
+        name_part = re.sub(r'[^a-z0-9-]', '', name_part)
+        return f"https://www.linkedin.com/in/{name_part}"
     
-    def generate_lead(self) -> Dict:
-        """Generate a single realistic lead"""
-        # Select industry
-        industry = random.choice(list(self.industries.keys()))
-        industry_data = self.industries[industry]
+    def _generate_company_website(self, company_name: str) -> str:
+        """Generate a company website from company name"""
+        clean_company = re.sub(r'[^a-zA-Z0-9]', '', company_name).lower()
+        return f"https://www.{clean_company}.com"
+    
+    def _infer_industry(self, job_title: str, company_name: str) -> str:
+        """Infer industry from job title and company name"""
+        job_lower = job_title.lower()
+        company_lower = company_name.lower()
         
-        # Generate personal info
-        first_name = self.fake.first_name()
-        last_name = self.fake.last_name()
-        full_name = f"{first_name} {last_name}"
+        # Technology indicators
+        if any(word in job_lower or word in company_lower for word in ['tech', 'software', 'it', 'data', 'ai', 'cloud', 'engineer']):
+            return "Technology"
+        # Healthcare
+        elif any(word in job_lower or word in company_lower for word in ['health', 'medical', 'hospital', 'care', 'clinic']):
+            return "Healthcare"
+        # Finance
+        elif any(word in job_lower or word in company_lower for word in ['finance', 'bank', 'invest', 'capital', 'wealth']):
+            return "Finance"
+        # Manufacturing
+        elif any(word in job_lower or word in company_lower for word in ['manufactur', 'production', 'industrial', 'factory']):
+            return "Manufacturing"
+        # Retail
+        elif any(word in job_lower or word in company_lower for word in ['retail', 'shop', 'store', 'sales']):
+            return "Retail"
+        # Logistics
+        elif any(word in job_lower or word in company_lower for word in ['logistics', 'supply', 'transport', 'shipping']):
+            return "Logistics"
+        else:
+            return "Business Services"
+    
+    def process_external_lead(self, lead_data: Dict) -> Dict:
+        """
+        Process and validate lead data from external sources (Facebook Lead Ads, Google Forms).
         
-        # Generate company info
-        company_suffix = random.choice(industry_data["companies"])
-        company_prefix = self.fake.company().split()[0]
-        company_name = f"{company_prefix} {company_suffix}"
+        Args:
+            lead_data: Dictionary containing lead information from external source
+                Required fields: name, email, phone, job_title, company
+                Optional fields: source, linkedin_url, company_website, industry, country
         
-        # Select role appropriate for industry
-        role_title = random.choice(industry_data["roles"])
+        Returns:
+            Processed and validated lead dictionary
+        """
+        # Extract and clean required fields
+        full_name = lead_data.get('name', '').strip()
+        email = lead_data.get('email', '').strip()
+        phone = lead_data.get('phone', '').strip()
+        job_title = lead_data.get('job_title', '').strip()
+        company_name = lead_data.get('company', '').strip()
         
-        # Generate contact info
-        email = self._generate_company_email(first_name, last_name, company_name, industry_data)
-        linkedin_url = self._generate_linkedin_url(first_name, last_name)
-        company_website = self._generate_company_website(company_name, industry_data)
+        # Validate required fields
+        if not all([full_name, email, company_name]):
+            raise ValueError("Missing required fields: name, email, and company are required")
         
-        # Select country
-        country = random.choice(self.countries)
+        if not self._validate_email(email):
+            raise ValueError(f"Invalid email format: {email}")
         
-        lead = {
+        # Optional fields with defaults
+        source = lead_data.get('source', 'external')
+        linkedin_url = lead_data.get('linkedin_url') or self._generate_linkedin_url(full_name)
+        company_website = lead_data.get('company_website') or self._generate_company_website(company_name)
+        industry = lead_data.get('industry') or self._infer_industry(job_title, company_name)
+        country = lead_data.get('country', 'United States')
+        
+        # Build processed lead
+        processed_lead = {
             "full_name": full_name,
             "company_name": company_name,
-            "role_title": role_title,
+            "role_title": job_title or "Business Professional",
             "industry": industry,
             "company_website": company_website,
             "email": email,
+            "phone": phone,
             "linkedin_url": linkedin_url,
-            "country": country
+            "country": country,
+            "source": source
         }
         
-        # Validate
-        assert self._validate_email(lead["email"]), f"Invalid email: {lead['email']}"
-        assert self._validate_url(lead["company_website"]), f"Invalid website: {lead['company_website']}"
-        assert self._validate_url(lead["linkedin_url"]), f"Invalid LinkedIn: {lead['linkedin_url']}"
-        
-        return lead
-    
-    def generate_leads(self, count: int = 200) -> List[Dict]:
-        """
-        Generate multiple realistic leads.
-        
-        Args:
-            count: Number of leads to generate (default 200)
-        
-        Returns:
-            List of lead dictionaries
-        """
-        leads = []
-        for _ in range(count):
-            lead = self.generate_lead()
-            leads.append(lead)
-        
-        return leads
+        return processed_lead
     
     def get_validation_summary(self, leads: List[Dict]) -> Dict:
         """Get validation summary for generated leads"""
@@ -182,22 +131,25 @@ class LeadGenerator:
 
 
 if __name__ == "__main__":
-    # Test lead generation
-    generator = LeadGenerator(seed=42)
+    # Test lead processing
+    generator = LeadGenerator()
     
-    print("🔧 Generating 200 leads...")
-    leads = generator.generate_leads(200)
+    # Sample external lead data
+    sample_lead = {
+        "name": "John Smith",
+        "email": "john.smith@techcorp.com",
+        "phone": "+1-555-0123",
+        "job_title": "VP of Engineering",
+        "company": "TechCorp Solutions",
+        "source": "facebook"
+    }
     
-    print(f"\n✅ Generated {len(leads)} leads")
+    print("🔧 Processing sample external lead...")
+    processed = generator.process_external_lead(sample_lead)
     
-    # Show validation summary
-    summary = generator.get_validation_summary(leads)
-    print(f"\n📊 Validation Summary:")
-    print(f"  Total Leads: {summary['total_leads']}")
-    print(f"  Valid Emails: {summary['valid_emails']}")
-    print(f"  Valid Websites: {summary['valid_websites']}")
-    print(f"  Valid LinkedIn: {summary['valid_linkedin']}")
-    print(f"  Validation Rate: {summary['validation_rate']}")
+    print(f"\n✅ Processed lead:")
+    for key, value in processed.items():
+        print(f"  {key}: {value}")
     print(f"\n  Industry Distribution:")
     for industry, count in summary['industry_distribution'].items():
         print(f"    {industry}: {count}")

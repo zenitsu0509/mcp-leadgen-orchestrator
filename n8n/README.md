@@ -1,8 +1,15 @@
 # n8n Workflow Configuration
 
-This document explains how to set up and configure the n8n workflow for the Lead Generation Pipeline.
+This document explains how to configure the n8n workflow for the Lead Generation Pipeline.
 
-## Docker Setup
+## Remote n8n Instance
+
+This project uses a self-hosted n8n instance accessible at:
+- **URL**: https://92e249f97c50.ngrok-free.app
+- **Workflow ID**: Dl9AKWe6K3mx3qUO2q-VJ
+- **Workflow URL**: https://92e249f97c50.ngrok-free.app/workflow/Dl9AKWe6K3mx3qUO2q-VJ
+
+## Docker Setup (Alternative - Not Required)
 
 ### Prerequisites
 
@@ -96,7 +103,7 @@ The workflow connects to the MCP server running at `http://localhost:8000` (or y
 
 ### 1. Import Workflow
 
-1. Open n8n at http://localhost:5678
+1. Open n8n at https://92e249f97c50.ngrok-free.app
 2. Click "Import from File" or "Import from URL"
 3. Import the `n8n-workflow.json` file from this directory
 

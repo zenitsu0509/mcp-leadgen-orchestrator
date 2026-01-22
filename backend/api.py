@@ -23,7 +23,7 @@ app = FastAPI(title="Lead Generation API", version="1.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5678"],
+    allow_origins=["http://localhost:3000", "https://92e249f97c50.ngrok-free.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,6 +46,7 @@ class PipelineRequest(BaseModel):
     enrichment_mode: str = "offline"
     lead_count: int = 200
     channel: str = "both"
+    lead_data: Optional[dict] = None  # External lead data from Facebook/Google Forms
 
 
 class LeadResponse(BaseModel):
@@ -145,7 +146,8 @@ async def run_pipeline(
         request.lead_count,
         request.enrichment_mode,
         request.dry_run,
-        request.channel
+        request.channel,
+        request.lead_data
     )
     
     return {
@@ -193,121 +195,127 @@ def execute_pipeline(
     lead_count: int,
     enrichment_mode: str,
     dry_run: bool,
-    channel: str
+    channel: str,
+    lead_data: Optional[dict] = None
 ):
     """Execute the complete pipeline"""
     print(f"\n🚀 Starting pipeline execution...")
     print(f"  Lead Count: {lead_count}")
     print(f"  Enrichment Mode: {enrichment_mode}")
     print(f"  Dry Run: {dry_run}")
-    print(f"  Channel: {channel}\n")
+    print(f"  Channel: {channel}")
+    print(f"  External Lead: {bool(lead_data)}\n")
     
     pipeline_state["running"] = True
     pipeline_state["progress"] = 0
     
     try:
-        # Clear old data before starting new pipeline run
-        print("🧹 Clearing old data...")
-        db.clear_all_data()
-        print(f"  ✅ Database cleared\n")
-        
-        # Stage 1: Generate leads
-        print("📝 Stage 1: Generating leads...")
-        pipeline_state["current_stage"] = "Generating leads"
+        # Stage 1: Process lead data
+        print("📝 Stage 1: Processing lead data...")
+        pipeline_state["current_stage"] = "Processing leads"
         pipeline_state["progress"] = 10
         
-        generator = LeadGenerator(seed=42)
-        leads = generator.generate_leads(lead_count)
-        print(f"  ✅ Generated {len(leads)} leads")
+        generator = LeadGenerator()
         
-        for lead in leads:
-            db.insert_lead(lead)
+        if lead_data:
+            # Process single external lead from Facebook/Google Forms
+            print(f"  Processing external lead from {lead_data.get('source', 'external')}...")
+            try:
+                processed_lead = generator.process_external_lead(lead_data)
+                lead_id = db.insert_lead(processed_lead)
+                processed_lead['id'] = lead_id
+                print(f"  ✅ Processed and inserted lead: {processed_lead['full_name']} (ID: {lead_id})")
+            except ValueError as e:
+                print(f"  ❌ Error processing lead: {e}")
+                pipeline_state["running"] = False
+                return
+        else:
+            print("  ⚠️  No lead data provided - pipeline requires external lead data")
+            print("  Pipeline expects lead data from Facebook Lead Ads or Google Forms\n")
+            pipeline_state["running"] = False
+            return
         
         pipeline_state["progress"] = 25
-        print(f"  ✅ Inserted {len(leads)} leads into database\n")
         
-        # Stage 2: Enrich leads
-        print("🔍 Stage 2: Enriching leads...")
-        pipeline_state["current_stage"] = "Enriching leads"
+        # Get the lead ID of the just-inserted lead
+        current_lead_id = processed_lead['id']
+        print(f"  ✅ Lead processing complete (ID: {current_lead_id})\n")
+        
+        # Stage 2: Enrich the single lead
+        print("🔍 Stage 2: Enriching lead...")
+        pipeline_state["current_stage"] = "Enriching lead"
         
         enricher = LeadEnricher(mode=enrichment_mode)
         new_leads = db.get_leads_by_status(LeadStatus.NEW)
-        print(f"  Found {len(new_leads)} leads to enrich")
         
-        for i, lead in enumerate(new_leads):
-            if i % 50 == 0:
-                print(f"  Enriching lead {i+1}/{len(new_leads)}...")
-            enrichment = enricher.enrich_lead(lead)
-            db.insert_enrichment(lead['id'], enrichment)
-            db.update_lead_status(lead['id'], LeadStatus.ENRICHED)
-            pipeline_state["progress"] = 25 + int((i / len(new_leads)) * 25)
+        # Find the specific lead we just inserted
+        current_lead = next((lead for lead in new_leads if lead['id'] == current_lead_id), None)
         
-        pipeline_state["progress"] = 50
-        print(f"  ✅ Enriched {len(new_leads)} leads\n")
+        if current_lead:
+            print(f"  Enriching lead: {current_lead['full_name']}...")
+            enrichment = enricher.enrich_lead(current_lead)
+            db.insert_enrichment(current_lead['id'], enrichment)
+            db.update_lead_status(current_lead['id'], LeadStatus.ENRICHED)
+            pipeline_state["progress"] = 50
+            print(f"  ✅ Enriched lead\n")
+        else:
+            print(f"  ❌ Could not find lead to enrich")
+            pipeline_state["running"] = False
+            return
         
-        # Stage 3: Generate messages
+        # Stage 3: Generate messages for the single lead
         print("✉️ Stage 3: Generating messages...")
         pipeline_state["current_stage"] = "Generating messages"
         
         personalizer = MessagePersonalizer()
-        enriched_leads = db.get_leads_by_status(LeadStatus.ENRICHED)
-        print(f"  Found {len(enriched_leads)} leads to generate messages for")
+        print(f"  Generating messages for {current_lead['full_name']}...")
         
-        for i, lead in enumerate(enriched_leads):
-            if i % 50 == 0:
-                print(f"  Generating messages {i+1}/{len(enriched_leads)}...")
-            enrichment = db.get_lead_with_enrichment(lead['id'])
-            messages = personalizer.generate_all_messages(lead, enrichment)
-            
-            # Store messages
-            db.insert_message(lead['id'], 'email', 'A', 
-                            f"{messages['email_a']['subject']}\n\n{messages['email_a']['body']}")
-            db.insert_message(lead['id'], 'linkedin', 'A', messages['linkedin_a']['message'])
-            
-            db.update_lead_status(lead['id'], LeadStatus.MESSAGED)
-            pipeline_state["progress"] = 50 + int((i / len(enriched_leads)) * 25)
+        enrichment = db.get_lead_with_enrichment(current_lead['id'])
+        messages = personalizer.generate_all_messages(current_lead, enrichment)
         
+        # Store messages
+        db.insert_message(current_lead['id'], 'email', 'A', 
+                        f"{messages['email_a']['subject']}\n\n{messages['email_a']['body']}")
+        db.insert_message(current_lead['id'], 'linkedin', 'A', messages['linkedin_a']['message'])
+        
+        db.update_lead_status(current_lead['id'], LeadStatus.MESSAGED)
         pipeline_state["progress"] = 75
-        print(f"  ✅ Generated messages for {len(enriched_leads)} leads\n")
+        print(f"  ✅ Generated messages\n")
         
-        # Stage 4: Send outreach
+        # Stage 4: Send outreach for the single lead
         print("📤 Stage 4: Sending outreach...")
         pipeline_state["current_stage"] = "Sending outreach"
         
         outreach = OutreachService(dry_run=dry_run)
-        messaged_leads = db.get_leads_by_status(LeadStatus.MESSAGED)
-        print(f"  Found {len(messaged_leads)} leads to send to")
+        print(f"  Sending to {current_lead['full_name']}...")
         
-        for i, lead in enumerate(messaged_leads):
-            if i % 50 == 0:
-                print(f"  Sending to lead {i+1}/{len(messaged_leads)}...")
-            enriched_lead = db.get_lead_with_enrichment(lead['id'])
-            
-            # Simple messages for sending
-            messages = {
-                'email_a': {
-                    'subject': f"Question about {lead['industry']}",
-                    'body': f"Hi {lead['full_name'].split()[0]},\n\nWould you be open to a 15-minute call?\n\nBest regards"
-                },
-                'linkedin_a': {
-                    'message': f"Hi {lead['full_name'].split()[0]}, would love to connect!"
-                }
+        enriched_lead = db.get_lead_with_enrichment(current_lead['id'])
+        
+        # Get the stored messages
+        messages = {
+            'email_a': {
+                'subject': f"Question about {current_lead['industry']}",
+                'body': f"Hi {current_lead['full_name'].split()[0]},\n\nWould you be open to a 15-minute call?\n\nBest regards"
+            },
+            'linkedin_a': {
+                'message': f"Hi {current_lead['full_name'].split()[0]}, would love to connect!"
             }
-            
-            results = outreach.send_outreach(lead, messages, channel)
-            
-            # Update status
-            all_success = all(r['status'] == 'success' for r in results.values())
-            if all_success:
-                db.update_lead_status(lead['id'], LeadStatus.SENT)
-            else:
-                db.update_lead_status(lead['id'], LeadStatus.FAILED)
-            
-            pipeline_state["progress"] = 75 + int((i / len(messaged_leads)) * 25)
+        }
+        
+        results = outreach.send_outreach(current_lead, messages, channel)
+        
+        # Update status
+        all_success = all(r['status'] == 'success' for r in results.values())
+        if all_success:
+            db.update_lead_status(current_lead['id'], LeadStatus.SENT)
+            print(f"  ✅ Successfully sent outreach")
+        else:
+            db.update_lead_status(current_lead['id'], LeadStatus.FAILED)
+            print(f"  ❌ Failed to send outreach")
         
         pipeline_state["progress"] = 100
         pipeline_state["current_stage"] = "Complete"
-        print(f"  ✅ Sent to {len(messaged_leads)} leads\n")
+        print(f"  ✅ Outreach complete\n")
         
         print("🎉 Pipeline execution complete!")
         print(f"  Final Status: {pipeline_state['current_stage']}")
