@@ -213,8 +213,9 @@ Add a test lead to your Google Sheet with:
 - **Phone**: +1-555-0123
 - **Job Title**: VP of Sales
 - **Company**: TechCorp Solutions
+- **Comments**: Interested in improving team productivity and automation tools
 
-The n8n workflow will automatically detect and process it.
+The n8n workflow will automatically detect and process it, generating personalized messages based on the comments provided.
 
 ### n8n Workflow Setup
 
@@ -222,8 +223,9 @@ The n8n workflow will automatically detect and process it.
 2. **Import the workflow**: Navigate to n8n and import `n8n/n8n-workflow.json`
 3. **Configure triggers**:
    - **Google Sheets Trigger**: Connect your Google account and select the spreadsheet with lead data
-     - Required columns: name, email, phone, job_title, company
+     - Required columns: `name`, `email`, `phone`, `job_title`, `company`, `comments`
    - **Facebook Lead Ads Trigger**: Connect your Facebook account and select the form
+     - Required fields: full_name, email, phone_number, job_title, company_name, comments
 4. **Update API endpoints**: Replace placeholder URLs in all HTTP Request nodes with your ngrok URL:
    - Run Pipeline: `https://YOUR-NGROK-URL.ngrok-free.app/pipeline/run`
    - Get Metrics: `https://YOUR-NGROK-URL.ngrok-free.app/metrics`
@@ -254,6 +256,7 @@ curl -X POST http://localhost:8000/pipeline/run \
       "phone": "+1-555-0199",
       "job_title": "CTO",
       "company": "Innovation Labs",
+      "comments": "Looking for AI solutions to streamline operations",
       "source": "test"
     }
   }'

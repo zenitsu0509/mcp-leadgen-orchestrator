@@ -40,8 +40,11 @@ class Database:
                 industry TEXT NOT NULL,
                 company_website TEXT NOT NULL,
                 email TEXT NOT NULL,
+                phone TEXT,
                 linkedin_url TEXT NOT NULL,
                 country TEXT NOT NULL,
+                comments TEXT,
+                source TEXT,
                 status TEXT DEFAULT 'NEW',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -105,8 +108,8 @@ class Database:
         cursor.execute("""
             INSERT INTO leads (
                 full_name, company_name, role_title, industry,
-                company_website, email, linkedin_url, country
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                company_website, email, phone, linkedin_url, country, comments, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             lead_data['full_name'],
             lead_data['company_name'],
@@ -114,8 +117,11 @@ class Database:
             lead_data['industry'],
             lead_data['company_website'],
             lead_data['email'],
+            lead_data.get('phone', ''),
             lead_data['linkedin_url'],
-            lead_data['country']
+            lead_data['country'],
+            lead_data.get('comments', ''),
+            lead_data.get('source', 'external')
         ))
         
         lead_id = cursor.lastrowid
@@ -238,6 +244,67 @@ class Database:
             LEFT JOIN enrichment e ON l.id = e.lead_id
             WHERE l.id = ?
         """, (lead_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return None
+        
+        lead = dict(row)
+        
+        # Parse JSON fields
+        if lead.get('pain_points'):
+            try:
+                lead['pain_points'] = json.loads(lead['pain_points'])
+            except:
+                lead['pain_points'] = []
+        
+        if lead.get('buying_triggers'):
+            try:
+                lead['buying_triggers'] = json.loads(lead['buying_triggers'])
+            except:
+                lead['buying_triggers'] = []
+        
+        return lead
+    
+    def get_lead_messages(self, lead_id: int) -> Dict:
+        """Get generated messages for a lead"""
+        conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT channel, variation, content
+            FROM messages
+            WHERE lead_id = ?
+            ORDER BY created_at DESC
+        """, (lead_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        messages = {}
+        for row in rows:
+            channel = row['channel']
+            variation = row['variation'].lower()
+            content = row['content']
+            
+            if channel == 'email':
+                # Parse email (format: "Subject: ...\n\nBody...")
+                parts = content.split('\n\n', 1)
+                subject = parts[0].replace('Subject: ', '').strip() if len(parts) > 0 else 'No Subject'
+                body = parts[1].strip() if len(parts) > 1 else content
+                messages[f'email_{variation}'] = {
+                    'subject': subject,
+                    'body': body
+                }
+            else:
+                messages[f'{channel}_{variation}'] = {
+                    'message': content
+                }
+        
+        return messages
         
         row = cursor.fetchone()
         conn.close()

@@ -131,6 +131,22 @@ async def get_lead(lead_id: int):
     return lead
 
 
+@app.get("/leads/{lead_id}/messages")
+async def get_lead_messages(lead_id: int):
+    """Get generated messages for a specific lead"""
+    # First check if lead exists
+    lead = db.get_lead_with_enrichment(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    messages = db.get_lead_messages(lead_id)
+    
+    return {
+        "lead_id": lead_id,
+        "messages": messages
+    }
+
+
 @app.post("/pipeline/run")
 async def run_pipeline(
     request: PipelineRequest,
@@ -289,18 +305,20 @@ def execute_pipeline(
         outreach = OutreachService(dry_run=dry_run)
         print(f"  Sending to {current_lead['full_name']}...")
         
-        enriched_lead = db.get_lead_with_enrichment(current_lead['id'])
+        # Retrieve the AI-generated messages from database
+        messages = db.get_lead_messages(current_lead['id'])
         
-        # Get the stored messages
-        messages = {
-            'email_a': {
-                'subject': f"Question about {current_lead['industry']}",
-                'body': f"Hi {current_lead['full_name'].split()[0]},\n\nWould you be open to a 15-minute call?\n\nBest regards"
-            },
-            'linkedin_a': {
-                'message': f"Hi {current_lead['full_name'].split()[0]}, would love to connect!"
+        if not messages:
+            print(f"  ⚠️ No messages found in database, using fallback")
+            messages = {
+                'email_a': {
+                    'subject': f"Question about {current_lead['industry']}",
+                    'body': f"Hi {current_lead['full_name'].split()[0]},\n\nWould you be open to a 15-minute call?\n\nBest regards"
+                },
+                'linkedin_a': {
+                    'message': f"Hi {current_lead['full_name'].split()[0]}, would love to connect!"
+                }
             }
-        }
         
         results = outreach.send_outreach(current_lead, messages, channel)
         

@@ -24,6 +24,7 @@ class MessagePersonalizer:
         """Generate prompt for email personalization"""
         pain_points = enrichment.get('pain_points', [])
         triggers = enrichment.get('buying_triggers', [])
+        comments = lead.get('comments', '')
         
         pain_point_text = ", ".join(pain_points[:2]) if pain_points else "operational challenges"
         trigger_text = triggers[0] if triggers else "business growth"
@@ -35,6 +36,9 @@ class MessagePersonalizer:
             style = "consultative and insight-driven"
             approach = "Start with an industry insight, then connect to their challenges"
         
+        # Add comments context if available
+        comments_context = f"\n- Lead's Comments/Interest: {comments}" if comments else ""
+        
         return f"""Write a personalized cold email (maximum 120 words) to {lead.get('full_name')}, {lead.get('role_title')} at {lead.get('company_name')}.
 
 Context:
@@ -42,14 +46,16 @@ Context:
 - Persona: {enrichment.get('persona_tag')}
 - Key Pain Point: {pain_point_text}
 - Buying Trigger: {trigger_text}
-- Company Size: {enrichment.get('company_size')}
+- Company Size: {enrichment.get('company_size')}{comments_context}
 
 Style: {style}
 Approach: {approach}
+{f"Important: Reference their specific interest or comment: '{comments}'" if comments else ""}
 
 Requirements:
 - Maximum 120 words
 - Reference the pain point or trigger naturally
+{f"- Acknowledge their comment/interest: '{comments}'" if comments else ""}
 - Include clear CTA: "15-minute call"
 - Professional tone
 - No hallucinated facts

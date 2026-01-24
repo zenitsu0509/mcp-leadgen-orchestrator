@@ -78,6 +78,7 @@ class LeadGenerator:
         phone = lead_data.get('phone', '').strip()
         job_title = lead_data.get('job_title', '').strip()
         company_name = lead_data.get('company', '').strip()
+        comments = lead_data.get('comments', '').strip()
         
         # Validate required fields
         if not all([full_name, email, company_name]):
@@ -104,7 +105,8 @@ class LeadGenerator:
             "phone": phone,
             "linkedin_url": linkedin_url,
             "country": country,
-            "source": source
+            "source": source,
+            "comments": comments
         }
         
         return processed_lead

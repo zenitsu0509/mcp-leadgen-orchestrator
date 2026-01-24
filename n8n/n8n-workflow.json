@@ -41,7 +41,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract lead data from Facebook Lead Ads or Google Sheets\nconst items = [];\n\nfor (const item of $input.all()) {\n  let leadData = {};\n  const data = item.json;\n  \n  // Check if data is from Facebook Lead Ads\n  if (data.leadgen_id || data.form_id) {\n    const fieldData = data.field_data || [];\n    leadData = {\n      name: fieldData.find(f => f.name === 'full_name')?.values?.[0] || data.name || '',\n      email: fieldData.find(f => f.name === 'email')?.values?.[0] || data.email || '',\n      phone: fieldData.find(f => f.name === 'phone_number')?.values?.[0] || data.phone || '',\n      job_title: fieldData.find(f => f.name === 'job_title')?.values?.[0] || data.job_title || '',\n      company: fieldData.find(f => f.name === 'company_name')?.values?.[0] || data.company || '',\n      source: 'facebook'\n    };\n  } \n  // Check if data is from Google Sheets\n  else {\n    // Google Sheets data comes as direct properties\n    // Assuming columns: name, email, phone, job_title, company\n    leadData = {\n      name: data.name || data.Name || data.full_name || data['Full Name'] || '',\n      email: data.email || data.Email || '',\n      phone: data.phone || data.Phone || data.phone_number || data['Phone Number'] || '',\n      job_title: data.job_title || data['Job Title'] || data.title || data.Title || '',\n      company: data.company || data.Company || data.company_name || data['Company Name'] || '',\n      source: 'google_sheets'\n    };\n  }\n  \n  items.push({ json: leadData });\n}\n\nreturn items;"
+        "jsCode": "// Extract lead data from Facebook Lead Ads or Google Sheets\nconst items = [];\n\nfor (const item of $input.all()) {\n  let leadData = {};\n  const data = item.json;\n  \n  // Check if data is from Facebook Lead Ads\n  if (data.leadgen_id || data.form_id) {\n    const fieldData = data.field_data || [];\n    leadData = {\n      name: fieldData.find(f => f.name === 'full_name')?.values?.[0] || data.name || '',\n      email: fieldData.find(f => f.name === 'email')?.values?.[0] || data.email || '',\n      phone: fieldData.find(f => f.name === 'phone_number')?.values?.[0] || data.phone || '',\n      job_title: fieldData.find(f => f.name === 'job_title')?.values?.[0] || data.job_title || '',\n      company: fieldData.find(f => f.name === 'company_name')?.values?.[0] || data.company || '',\n      comments: fieldData.find(f => f.name === 'comments')?.values?.[0] || data.comments || '',\n      source: 'facebook'\n    };\n  } \n  // Check if data is from Google Sheets\n  else {\n    // Google Sheets data comes as direct properties\n    // Assuming columns: name, email, phone, job_title, company, comments\n    leadData = {\n      name: data.name || data.Name || data.full_name || data['Full Name'] || '',\n      email: data.email || data.Email || '',\n      phone: data.phone || data.Phone || data.phone_number || data['Phone Number'] || '',\n      job_title: data.job_title || data['Job Title'] || data.title || data.Title || '',\n      company: data.company || data.Company || data.company_name || data['Company Name'] || '',\n      comments: data.comments || data.Comments || data.comment || data.Comment || '',\n      source: 'google_sheets'\n    };\n  }\n  \n  items.push({ json: leadData });\n}\n\nreturn items;"
       },
       "name": "Process Lead Data",
       "type": "n8n-nodes-base.code",
@@ -74,7 +74,7 @@
             },
             {
               "name": "enrichment_mode",
-              "value": "=offline"
+              "value": "=ai"
             },
             {
               "name": "lead_count",
@@ -86,7 +86,7 @@
             },
             {
               "name": "lead_data",
-              "value": "={{ { \"name\": $json.name, \"email\": $json.email, \"phone\": $json.phone, \"job_title\": $json.job_title, \"company\": $json.company, \"source\": $json.source } }}"
+              "value": "={{ { \"name\": $json.name, \"email\": $json.email, \"phone\": $json.phone, \"job_title\": $json.job_title, \"company\": $json.company, \"comments\": $json.comments, \"source\": $json.source } }}"
             }
           ]
         },
