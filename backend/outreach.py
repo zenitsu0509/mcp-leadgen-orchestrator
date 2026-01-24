@@ -197,7 +197,7 @@ class OutreachService:
         
         Args:
             lead: Lead dictionary
-            messages: Messages dictionary with email_a and linkedin_a
+            messages: Messages dictionary with email_a
             channel: "email", "linkedin", or "both"
         
         Returns:
@@ -215,14 +215,7 @@ class OutreachService:
             )
             results['email'] = email_result
         
-        if channel in ["linkedin", "both"]:
-            # Send LinkedIn DM (variation A)
-            linkedin_result = self.send_linkedin_dm(
-                linkedin_url=lead['linkedin_url'],
-                message=messages['linkedin_a']['message'],
-                lead_name=lead['full_name']
-            )
-            results['linkedin'] = linkedin_result
+        # LinkedIn messaging removed - only email is sent
         
         return results
 

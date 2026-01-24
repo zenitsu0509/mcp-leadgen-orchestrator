@@ -292,7 +292,8 @@ def execute_pipeline(
         # Store messages
         db.insert_message(current_lead['id'], 'email', 'A', 
                         f"{messages['email_a']['subject']}\n\n{messages['email_a']['body']}")
-        db.insert_message(current_lead['id'], 'linkedin', 'A', messages['linkedin_a']['message'])
+        db.insert_message(current_lead['id'], 'email', 'B', 
+                        f"{messages['email_b']['subject']}\n\n{messages['email_b']['body']}")
         
         db.update_lead_status(current_lead['id'], LeadStatus.MESSAGED)
         pipeline_state["progress"] = 75
@@ -314,9 +315,6 @@ def execute_pipeline(
                 'email_a': {
                     'subject': f"Question about {current_lead['industry']}",
                     'body': f"Hi {current_lead['full_name'].split()[0]},\n\nWould you be open to a 15-minute call?\n\nBest regards"
-                },
-                'linkedin_a': {
-                    'message': f"Hi {current_lead['full_name'].split()[0]}, would love to connect!"
                 }
             }
         

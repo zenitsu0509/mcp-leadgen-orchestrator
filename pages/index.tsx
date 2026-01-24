@@ -49,6 +49,7 @@ export default function Home() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [filterSource, setFilterSource] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   const fetchMetrics = async () => {
     try {
@@ -109,14 +110,16 @@ export default function Home() {
     fetchMetrics();
     fetchLeads();
 
-    // Poll for updates every 3 seconds
+    // Poll for updates every 10 seconds (reduced from 3 seconds)
     const interval = setInterval(() => {
-      fetchMetrics();
-      fetchLeads();
-    }, 3000);
+      if (autoRefresh) {
+        fetchMetrics();
+        fetchLeads();
+      }
+    }, 10000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [autoRefresh]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -148,11 +151,31 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-4">
                 <button
+                  onClick={() => setAutoRefresh(!autoRefresh)}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm rounded-md ${
+                    autoRefresh 
+                      ? 'bg-green-900 hover:bg-green-800 text-green-200' 
+                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                  }`}
+                >
+                  {autoRefresh ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Auto-refresh ON
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      Auto-refresh OFF
+                    </>
+                  )}
+                </button>
+                <button
                   onClick={fetchLeads}
                   className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md"
                 >
                   <RefreshCw className="w-4 h-4" />
-                  Refresh
+                  Refresh Now
                 </button>
                 <button
                   onClick={clearData}
@@ -277,7 +300,9 @@ export default function Home() {
           <div className="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-white">Leads ({filteredLeads.length})</h2>
-              <div className="text-sm text-gray-400">Auto-refresh every 3 seconds</div>
+              <div className="text-sm text-gray-400">
+                {autoRefresh ? 'Auto-refresh every 10 seconds' : 'Auto-refresh paused'}
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-700">

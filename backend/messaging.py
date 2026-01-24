@@ -201,16 +201,14 @@ Requirements:
     
     def generate_all_messages(self, lead: Dict, enrichment: Dict) -> Dict:
         """
-        Generate all message variations for a lead.
+        Generate all message variations for a lead (email only).
         
         Returns:
-            Dictionary with email_a, email_b, linkedin_a, linkedin_b
+            Dictionary with email_a, email_b
         """
         return {
             "email_a": self.generate_email(lead, enrichment, "A"),
-            "email_b": self.generate_email(lead, enrichment, "B"),
-            "linkedin_a": self.generate_linkedin_dm(lead, enrichment, "A"),
-            "linkedin_b": self.generate_linkedin_dm(lead, enrichment, "B")
+            "email_b": self.generate_email(lead, enrichment, "B")
         }
 
 

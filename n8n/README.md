@@ -2,6 +2,12 @@
 
 This document explains how to configure the n8n workflow for the Lead Generation Pipeline.
 
+## Workflow Diagram
+
+![n8n Workflow](workflow-diagram.png)
+
+The workflow automatically processes leads from Facebook Lead Ads and Google Sheets, enriches them with AI, generates personalized messages, and sends outreach emails.
+
 ## Remote n8n Instance
 
 This project uses a self-hosted n8n instance accessible at:
