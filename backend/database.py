@@ -216,15 +216,15 @@ class Database:
         conn.close()
     
     def get_leads_by_status(self, status: Optional[LeadStatus] = None) -> List[Dict]:
-        """Get leads filtered by status"""
+        """Get leads filtered by status, ordered by newest first"""
         conn = self.get_connection()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         if status:
-            cursor.execute("SELECT * FROM leads WHERE status = ?", (status.value,))
+            cursor.execute("SELECT * FROM leads WHERE status = ? ORDER BY created_at DESC", (status.value,))
         else:
-            cursor.execute("SELECT * FROM leads")
+            cursor.execute("SELECT * FROM leads ORDER BY created_at DESC")
         
         rows = cursor.fetchall()
         leads = [dict(row) for row in rows]

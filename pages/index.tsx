@@ -253,10 +253,10 @@ export default function Home() {
                   className="w-full px-3 py-2 bg-gray-700 border border-gray-600 text-gray-200 rounded-md focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="all">All Status</option>
-                  <option value="new">New</option>
-                  <option value="enriched">Enriched</option>
-                  <option value="messaged">Messaged</option>
-                  <option value="sent">Sent</option>
+                  <option value="NEW">New</option>
+                  <option value="ENRICHED">Enriched</option>
+                  <option value="MESSAGED">Messaged</option>
+                  <option value="SENT">Sent</option>
                 </select>
               </div>
             </div>
@@ -284,13 +284,13 @@ export default function Home() {
             />
             <MetricCard
               title="Messaged"
-              value={leads.filter(l => l.status === 'messaged' || l.status === 'sent').length}
+              value={leads.filter(l => l.status === 'MESSAGED' || l.status === 'SENT').length}
               icon={<MessageSquare className="w-6 h-6" />}
               color="bg-purple-500"
             />
             <MetricCard
               title="Sent"
-              value={leads.filter(l => l.status === 'sent').length}
+              value={leads.filter(l => l.status === 'SENT').length}
               icon={<Mail className="w-6 h-6" />}
               color="bg-green-500"
             />
