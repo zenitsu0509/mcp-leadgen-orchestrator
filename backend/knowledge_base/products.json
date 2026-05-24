@@ -1,0 +1,462 @@
+{
+  "company": {
+    "name": "Your Company Name",
+    "tagline": "Intelligent Solutions for the Modern Enterprise",
+    "website": "https://yourcompany.com"
+  },
+  "domains": [
+    {
+      "id": "voice_models",
+      "name": "Voice Models",
+      "description": "End-to-end voice AI solutions for speech understanding, synthesis, and real-time audio intelligence.",
+      "products": [
+        {
+          "id": "vm_asr",
+          "name": "Automatic Speech Recognition (ASR)",
+          "tagline": "Turn spoken words into accurate text at scale",
+          "description": "Our enterprise-grade ASR engine converts audio to text in real-time with industry-leading accuracy. Built for noisy environments, multiple accents, and domain-specific vocabulary including medical, legal, and technical terminology.",
+          "key_features": [
+            "Real-time transcription with <300ms latency",
+            "Support for 30+ languages and regional accents",
+            "Custom vocabulary and domain adaptation",
+            "Noise cancellation and audio preprocessing",
+            "Speaker-independent recognition",
+            "REST API and WebSocket streaming"
+          ],
+          "use_cases": [
+            "Call center transcription and quality assurance",
+            "Meeting and conference transcription",
+            "Voice-controlled applications",
+            "Medical dictation and clinical documentation",
+            "Legal proceedings and court transcription",
+            "Accessibility and subtitle generation"
+          ],
+          "target_roles": ["CTO", "VP of Engineering", "Head of Product", "Director of Customer Experience", "Chief Digital Officer", "IT Director"],
+          "target_industries": ["Healthcare", "Legal", "Finance", "Contact Center", "Media", "Technology", "Telecommunications"],
+          "keywords": ["speech to text", "transcription", "voice recognition", "audio to text", "real-time speech", "call transcription", "meeting notes", "voice interface", "voice AI"],
+          "integration": ["REST API", "WebSocket", "Python SDK", "JavaScript SDK", "AWS", "Azure"],
+          "pricing_model": "Per-minute or subscription"
+        },
+        {
+          "id": "vm_streaming",
+          "name": "Real-Time Voice Streaming",
+          "tagline": "Ultra-low latency audio streaming for live voice applications",
+          "description": "A high-performance voice streaming infrastructure that enables real-time bidirectional audio pipelines. Purpose-built for applications where latency is critical — live captioning, voice bots, real-time translation, and interactive voice response systems.",
+          "key_features": [
+            "Sub-100ms end-to-end latency",
+            "Adaptive bitrate and packet loss recovery",
+            "Multi-party streaming for conferencing",
+            "WebRTC and SIP protocol support",
+            "Auto-scaling to millions of concurrent streams",
+            "Edge deployment options"
+          ],
+          "use_cases": [
+            "Live voice assistants and conversational AI",
+            "Real-time interpreter and translation services",
+            "Virtual contact center agents",
+            "Live broadcast and streaming captioning",
+            "Telepresence and remote collaboration",
+            "Interactive gaming voice communication"
+          ],
+          "target_roles": ["VP of Engineering", "Head of Platform", "Chief Architect", "Director of Operations", "CTO"],
+          "target_industries": ["Technology", "Telecommunications", "Media", "Contact Center", "Gaming", "Healthcare"],
+          "keywords": ["live audio", "low latency streaming", "real-time voice", "voice pipeline", "audio infrastructure", "WebRTC", "voice bot", "live captioning"],
+          "integration": ["WebRTC", "WebSocket", "SIP", "Twilio", "Vonage", "AWS Connect"],
+          "pricing_model": "Per concurrent stream or usage-based"
+        },
+        {
+          "id": "vm_translation",
+          "name": "Multilingual Voice Translation",
+          "tagline": "Break language barriers with real-time spoken language translation",
+          "description": "Seamlessly translate spoken language in real-time across 50+ language pairs. Combines our ASR engine with neural machine translation and TTS to deliver natural-sounding translated speech, preserving speaker tone and intent.",
+          "key_features": [
+            "50+ language pair support",
+            "Real-time speech-to-speech translation",
+            "Context-aware neural translation engine",
+            "Tone and emotion preservation",
+            "Industry-specific translation models (medical, legal, finance)",
+            "Batch processing for recorded audio"
+          ],
+          "use_cases": [
+            "Multilingual customer support",
+            "Global conference and meeting translation",
+            "Medical consultations with foreign patients",
+            "International legal proceedings",
+            "Cross-border e-commerce and sales calls",
+            "Content localization at scale"
+          ],
+          "target_roles": ["Chief Customer Officer", "VP of Customer Success", "Head of International Operations", "CMO", "Director of Localization"],
+          "target_industries": ["Healthcare", "Legal", "Finance", "Retail", "Technology", "Government", "E-commerce"],
+          "keywords": ["language translation", "multilingual", "real-time translation", "speech translation", "localization", "interpreter", "global operations", "language barrier"],
+          "integration": ["REST API", "Microsoft Teams", "Zoom", "Salesforce", "ServiceNow"],
+          "pricing_model": "Per-minute or enterprise license"
+        },
+        {
+          "id": "vm_emotion",
+          "name": "Emotion Detection",
+          "tagline": "Understand how people truly feel through their voice",
+          "description": "Our voice emotion detection model analyzes speech in real-time to identify emotional states including frustration, satisfaction, urgency, confusion, and joy. Goes beyond sentiment — delivers granular emotion scores for each utterance, enabling proactive intervention and deep customer insight.",
+          "key_features": [
+            "10+ emotion categories with confidence scores",
+            "Real-time analysis during live calls",
+            "Tone, pitch, and prosody analysis",
+            "Agent alerting for escalation scenarios",
+            "Post-call emotion journey mapping",
+            "Benchmarking and trend dashboards"
+          ],
+          "use_cases": [
+            "Contact center agent performance and coaching",
+            "Customer satisfaction monitoring without surveys",
+            "Churn prediction based on frustration signals",
+            "Mental health and wellbeing monitoring",
+            "Sales call analysis and deal health",
+            "Brand research and ad testing"
+          ],
+          "target_roles": ["VP of Customer Experience", "Head of Contact Center", "Chief Customer Officer", "Director of Quality Assurance", "Sales Enablement Lead"],
+          "target_industries": ["Contact Center", "Healthcare", "Finance", "Retail", "Insurance", "HR Tech"],
+          "keywords": ["emotion AI", "sentiment analysis", "customer emotion", "voice sentiment", "call analytics", "agent coaching", "customer satisfaction", "frustration detection", "mood detection"],
+          "integration": ["Salesforce", "Zendesk", "HubSpot", "AWS Connect", "Genesys", "Avaya"],
+          "pricing_model": "Per-call or monthly seat license"
+        },
+        {
+          "id": "vm_diarization",
+          "name": "Speaker Diarization",
+          "tagline": "Know who said what, and when",
+          "description": "Automatically separate and identify individual speakers in multi-party audio recordings. Our diarization engine accurately timestamps and labels each speaker's turns, enabling structured transcription of meetings, interviews, call recordings, and legal proceedings.",
+          "key_features": [
+            "Accurate speaker identification for 2-10+ speakers",
+            "Speaker enrollment and persistent identity",
+            "Real-time and batch processing modes",
+            "Works on overlapping speech",
+            "Combined with ASR for full speaker-attributed transcripts",
+            "Export to structured formats (JSON, SRT, DOCX)"
+          ],
+          "use_cases": [
+            "Automated meeting minutes with speaker attribution",
+            "Call center quality monitoring per-agent",
+            "Legal deposition and court recording transcription",
+            "Medical rounds documentation",
+            "Podcast and interview transcription",
+            "Compliance call recording analysis"
+          ],
+          "target_roles": ["Head of Legal", "Chief Compliance Officer", "VP of Operations", "Director of Product", "Head of IT"],
+          "target_industries": ["Legal", "Healthcare", "Finance", "Media", "Contact Center", "Government"],
+          "keywords": ["speaker identification", "who spoke", "meeting transcription", "multi-speaker", "speaker labeling", "call recording", "voice identity", "conversation intelligence"],
+          "integration": ["REST API", "Zoom", "Google Meet", "Microsoft Teams", "Webex"],
+          "pricing_model": "Per-hour of audio or subscription"
+        },
+        {
+          "id": "vm_tts",
+          "name": "Text-to-Speech (TTS)",
+          "tagline": "Human-quality voice synthesis for any application",
+          "description": "Generate natural, expressive speech from text using our neural TTS engine. Offers a library of 100+ voices across 30 languages, with custom voice cloning capabilities. Build voice interfaces, automate narration, or create branded voice identities.",
+          "key_features": [
+            "100+ prebuilt neural voices",
+            "Custom voice cloning from 30-second samples",
+            "SSML support for pronunciation and prosody control",
+            "Real-time streaming synthesis",
+            "Emotional and expressive speaking styles",
+            "Brand voice creation and licensing"
+          ],
+          "use_cases": [
+            "IVR and voicebot responses",
+            "E-learning and training narration",
+            "Accessibility for visually impaired users",
+            "Audiobook and podcast creation",
+            "Branded voice assistants",
+            "Automated news and report reading"
+          ],
+          "target_roles": ["Head of Product", "CTO", "Director of UX", "VP of Marketing", "E-learning Director"],
+          "target_industries": ["Technology", "Media", "E-learning", "Healthcare", "Retail", "Finance"],
+          "keywords": ["text to speech", "voice synthesis", "TTS", "voice cloning", "IVR", "voice assistant", "narration", "audio generation", "synthetic voice"],
+          "integration": ["REST API", "Twilio", "AWS Polly alternative", "Unity", "Web Speech API"],
+          "pricing_model": "Per character or monthly subscription"
+        },
+        {
+          "id": "vm_biometrics",
+          "name": "Voice Biometrics & Authentication",
+          "tagline": "Verify identity with the power of voice",
+          "description": "Authenticate users and detect fraud using voice as a biometric. Our passive voice biometrics engine verifies identity in the background during natural conversation — no PINs, no passwords. Includes active challenge-response authentication and deepfake voice fraud detection.",
+          "key_features": [
+            "Passive authentication during natural speech (10-15 seconds)",
+            "Active voice challenge-response mode",
+            "Deepfake and voice spoofing detection",
+            "Voice profile enrollment and management",
+            "Liveness detection",
+            "Compliance with GDPR and CCPA"
+          ],
+          "use_cases": [
+            "Contact center caller authentication",
+            "Banking and financial services identity verification",
+            "Healthcare patient identity confirmation",
+            "Fraud detection for phone-based transactions",
+            "Access control for secure facilities",
+            "Voice-based digital signature"
+          ],
+          "target_roles": ["CISO", "Head of Fraud", "Chief Risk Officer", "VP of IT Security", "Head of Compliance", "CTO"],
+          "target_industries": ["Finance", "Banking", "Healthcare", "Government", "Insurance", "Telecommunications"],
+          "keywords": ["voice authentication", "voice ID", "biometrics", "fraud detection", "identity verification", "voice security", "deepfake detection", "caller authentication", "passwordless"],
+          "integration": ["REST API", "AWS Connect", "Genesys", "Avaya", "OKTA", "ForgeRock"],
+          "pricing_model": "Per-verification or enterprise license"
+        }
+      ]
+    },
+    {
+      "id": "ai_agents",
+      "name": "AI Agents",
+      "description": "Autonomous and semi-autonomous AI agents that handle complex tasks, workflows, and decisions across business functions.",
+      "products": [
+        {
+          "id": "ag_conversational",
+          "name": "Conversational AI Agent",
+          "tagline": "Intelligent agents that handle end-to-end conversations",
+          "description": "Deploy LLM-powered conversational agents that understand intent, manage multi-turn dialogue, and complete complex tasks autonomously. Our agents integrate with your existing tools, CRMs, and databases — handling customer queries, scheduling, support tickets, and more without human intervention.",
+          "key_features": [
+            "Multi-turn dialogue management",
+            "Tool and API call execution",
+            "Dynamic knowledge base integration (RAG)",
+            "Handoff to human agents with full context",
+            "Omnichannel: chat, voice, email, WhatsApp",
+            "Configurable guardrails and fallback policies"
+          ],
+          "use_cases": [
+            "24/7 customer support automation",
+            "Intelligent sales qualification (SDR agent)",
+            "IT helpdesk and ticket resolution",
+            "HR onboarding and FAQ handling",
+            "Appointment scheduling and reminders",
+            "Order tracking and returns management"
+          ],
+          "target_roles": ["VP of Customer Success", "Head of Support", "CTO", "Chief Digital Officer", "Head of HR", "Director of Operations"],
+          "target_industries": ["Retail", "Healthcare", "Finance", "Technology", "Logistics", "HR Tech"],
+          "keywords": ["chatbot", "conversational AI", "virtual agent", "customer service bot", "support automation", "AI assistant", "NLP agent", "LLM agent", "SDR automation"],
+          "integration": ["Salesforce", "Zendesk", "HubSpot", "WhatsApp Business", "Twilio", "Slack", "MS Teams"],
+          "pricing_model": "Per conversation or monthly seat"
+        },
+        {
+          "id": "ag_workflow",
+          "name": "Workflow Automation Agent",
+          "tagline": "AI agents that execute multi-step business workflows autonomously",
+          "description": "Intelligent agents that plan, execute, and adapt multi-step workflows without human intervention. Unlike rigid RPA tools, our agents reason about tasks, handle exceptions, and use APIs, documents, and web data to complete complex business processes end-to-end.",
+          "key_features": [
+            "Goal-directed task planning and execution",
+            "Multi-tool orchestration (APIs, databases, browsers)",
+            "Exception handling and self-correction",
+            "Human-in-the-loop checkpoints",
+            "Audit trail for all agent actions",
+            "Integration with 100+ business apps via connectors"
+          ],
+          "use_cases": [
+            "Lead research and CRM data enrichment",
+            "Invoice processing and AP automation",
+            "Compliance document review and filing",
+            "Employee onboarding checklist automation",
+            "Competitive intelligence gathering",
+            "Report generation from multiple data sources"
+          ],
+          "target_roles": ["COO", "VP of Operations", "Head of Finance", "Chief Transformation Officer", "Head of IT", "Business Process Manager"],
+          "target_industries": ["Finance", "Healthcare", "Legal", "Manufacturing", "Logistics", "Technology"],
+          "keywords": ["workflow automation", "agentic AI", "process automation", "RPA alternative", "AI ops", "autonomous agent", "task automation", "business process", "AI orchestration"],
+          "integration": ["Zapier", "Make", "n8n", "Salesforce", "SAP", "Microsoft 365", "Google Workspace"],
+          "pricing_model": "Per workflow run or monthly subscription"
+        },
+        {
+          "id": "ag_data_analyst",
+          "name": "AI Data Analyst Agent",
+          "tagline": "Ask questions about your data in plain English — get instant insights",
+          "description": "An autonomous data analyst agent that connects to your databases, warehouses, and dashboards. Business users can ask natural language questions and get accurate charts, reports, and recommendations — no SQL or data science knowledge needed.",
+          "key_features": [
+            "Natural language to SQL query generation",
+            "Connects to PostgreSQL, BigQuery, Snowflake, Redshift",
+            "Auto-generates charts and visualizations",
+            "Proactive anomaly and trend alerts",
+            "Scheduled report narratives in plain English",
+            "Secure, role-based data access control"
+          ],
+          "use_cases": [
+            "Executive dashboards with AI-generated narratives",
+            "Sales pipeline and forecast analysis",
+            "Customer churn prediction and root cause",
+            "Operations KPI monitoring",
+            "Financial performance reporting",
+            "Marketing campaign ROI analysis"
+          ],
+          "target_roles": ["CEO", "CFO", "VP of Sales", "Head of Analytics", "CMO", "Director of Strategy"],
+          "target_industries": ["Technology", "Finance", "Retail", "Healthcare", "Manufacturing", "Media"],
+          "keywords": ["data analysis", "business intelligence", "AI analytics", "natural language SQL", "data insights", "automated reporting", "BI agent", "data democratization", "NL2SQL"],
+          "integration": ["Snowflake", "BigQuery", "PostgreSQL", "Tableau", "Power BI", "Looker", "Metabase"],
+          "pricing_model": "Per query or monthly subscription"
+        },
+        {
+          "id": "ag_sales",
+          "name": "AI Sales Development Agent (SDR)",
+          "tagline": "Automate prospecting, outreach, and qualification at scale",
+          "description": "A fully autonomous AI sales agent that researches prospects, crafts personalized outreach, follows up intelligently, and qualifies leads — handing only sales-ready conversations to your human team. Operates 24/7 across email, LinkedIn, and phone.",
+          "key_features": [
+            "Automated prospect research and enrichment",
+            "Hyper-personalized multi-channel outreach (email, LinkedIn, SMS)",
+            "Intelligent follow-up sequences with timing optimization",
+            "BANT qualification via conversational AI",
+            "CRM sync and pipeline update automation",
+            "A/B testing of messaging and sequences"
+          ],
+          "use_cases": [
+            "Outbound lead generation at scale",
+            "Inbound lead qualification and routing",
+            "Re-engagement of dormant prospects",
+            "Conference and event follow-up",
+            "Competitive displacement campaigns",
+            "Account-based marketing outreach"
+          ],
+          "target_roles": ["VP of Sales", "Head of Sales Development", "CRO", "Director of Demand Generation", "CMO"],
+          "target_industries": ["Technology", "SaaS", "Finance", "Healthcare", "Professional Services"],
+          "keywords": ["sales automation", "SDR agent", "AI outreach", "lead generation automation", "sales prospecting", "cold email AI", "LinkedIn automation", "pipeline automation", "sales AI"],
+          "integration": ["Salesforce", "HubSpot", "Outreach", "Salesloft", "LinkedIn Sales Navigator", "Apollo", "Gmail", "Outlook"],
+          "pricing_model": "Per seat or per qualified lead"
+        },
+        {
+          "id": "ag_document",
+          "name": "Document Intelligence Agent",
+          "tagline": "Extract, understand, and act on information locked in documents",
+          "description": "An AI agent that reads, understands, and processes unstructured documents — contracts, invoices, reports, medical records, and more. Extract structured data, answer questions about documents, compare versions, flag risks, and trigger downstream workflows automatically.",
+          "key_features": [
+            "Supports PDF, Word, Excel, images, emails",
+            "Intelligent data extraction with >95% accuracy",
+            "Contract clause and obligation tracking",
+            "Multi-document comparison and summarization",
+            "Risk and compliance flag detection",
+            "Workflow trigger on extracted data"
+          ],
+          "use_cases": [
+            "Contract review and obligation tracking",
+            "Invoice and purchase order processing",
+            "Medical record extraction and coding",
+            "Insurance claims processing",
+            "Regulatory filing and compliance review",
+            "Due diligence document analysis"
+          ],
+          "target_roles": ["General Counsel", "CFO", "Head of Compliance", "Head of Operations", "Chief Risk Officer", "VP of Finance"],
+          "target_industries": ["Legal", "Finance", "Healthcare", "Insurance", "Real Estate", "Government"],
+          "keywords": ["document processing", "contract AI", "OCR", "data extraction", "document understanding", "IDP", "invoice processing", "NLP documents", "unstructured data", "document automation"],
+          "integration": ["SharePoint", "Google Drive", "DocuSign", "SAP", "Oracle", "Salesforce", "Workday"],
+          "pricing_model": "Per document or monthly volume plan"
+        }
+      ]
+    },
+    {
+      "id": "software_solutions",
+      "name": "Software Solutions",
+      "description": "Custom-built and accelerator-based software solutions tailored to specific industry needs and enterprise requirements.",
+      "products": [
+        {
+          "id": "sw_custom_dev",
+          "name": "Custom AI Application Development",
+          "tagline": "We design, build, and deploy AI-powered software tailored to your needs",
+          "description": "Full-cycle custom software development with AI at the core. From MVP to production-grade enterprise systems, our engineering teams build bespoke AI applications — integrating your data, workflows, and existing systems. We specialize in rapid prototyping, scalable architecture, and AI model integration.",
+          "key_features": [
+            "Full-stack development (web, mobile, API)",
+            "AI/ML model integration and fine-tuning",
+            "Cloud-native architecture (AWS, Azure, GCP)",
+            "Agile delivery with 2-week sprint cadence",
+            "DevOps, CI/CD, and MLOps pipelines",
+            "Post-launch support and SLA guarantees"
+          ],
+          "use_cases": [
+            "Internal productivity tools with AI assistance",
+            "Customer-facing AI-powered products",
+            "Legacy system modernization with AI",
+            "Industry-specific AI platforms",
+            "Data pipelines and real-time dashboards",
+            "Proof-of-concept and pilot projects"
+          ],
+          "target_roles": ["CEO", "CTO", "VP of Product", "Head of Innovation", "Chief Digital Officer", "Director of Engineering"],
+          "target_industries": ["Technology", "Healthcare", "Finance", "Manufacturing", "Retail", "Logistics"],
+          "keywords": ["custom software", "AI development", "bespoke application", "software engineering", "AI integration", "product development", "SaaS development", "MVP", "digital transformation"],
+          "integration": ["Any stack by requirement", "AWS", "Azure", "GCP", "Kubernetes", "Docker"],
+          "pricing_model": "Fixed price or time & materials"
+        },
+        {
+          "id": "sw_platform_integration",
+          "name": "AI Platform Integration & Consulting",
+          "tagline": "Embed AI capabilities into your existing enterprise systems",
+          "description": "We help enterprises integrate AI capabilities — LLMs, voice models, automation agents — into their existing ERP, CRM, and operational platforms. Our integration specialists handle the architecture, security, compliance, and change management, ensuring smooth adoption with minimal disruption.",
+          "key_features": [
+            "Enterprise system audit and AI readiness assessment",
+            "API and middleware development for AI integration",
+            "LLM and model selection guidance",
+            "Security, data governance, and compliance review",
+            "Change management and training",
+            "Ongoing optimization and model monitoring"
+          ],
+          "use_cases": [
+            "Adding AI to SAP or Oracle ERP",
+            "Embedding AI into Salesforce CRM",
+            "LLM integration into internal knowledge portals",
+            "AI-powered analytics on top of existing data warehouse",
+            "Chatbot integration into existing support platforms",
+            "Voice AI integration into existing telephony"
+          ],
+          "target_roles": ["CTO", "Head of IT", "Chief Digital Officer", "VP of Operations", "Enterprise Architect", "Head of Digital Transformation"],
+          "target_industries": ["Manufacturing", "Finance", "Healthcare", "Retail", "Logistics", "Government"],
+          "keywords": ["AI consulting", "enterprise AI", "system integration", "digital transformation", "AI strategy", "ERP AI", "CRM AI", "AI implementation", "platform modernization"],
+          "integration": ["SAP", "Oracle", "Salesforce", "Microsoft Dynamics", "ServiceNow", "Workday"],
+          "pricing_model": "Project-based or retainer"
+        },
+        {
+          "id": "sw_mlops",
+          "name": "MLOps & AI Infrastructure",
+          "tagline": "Build the foundation to run AI reliably in production",
+          "description": "Design and implement end-to-end MLOps infrastructure for teams that need to train, deploy, monitor, and iterate AI/ML models at scale. Includes model registry, CI/CD for ML pipelines, drift detection, explainability tooling, and cost optimization for GPU workloads.",
+          "key_features": [
+            "Model training and experiment tracking (MLflow, W&B)",
+            "Automated CI/CD pipelines for ML models",
+            "Model serving (real-time and batch)",
+            "Data drift and model performance monitoring",
+            "Explainability and bias detection tooling",
+            "Cloud cost optimization for GPU/TPU workloads"
+          ],
+          "use_cases": [
+            "Scaling from prototype model to production deployment",
+            "Reducing model deployment time from weeks to hours",
+            "Monitoring live model accuracy and retraining pipelines",
+            "Multi-model A/B testing in production",
+            "Compliance-ready AI with audit trails",
+            "Reducing ML infrastructure costs"
+          ],
+          "target_roles": ["VP of Engineering", "Head of Data Science", "ML Engineering Lead", "Chief Data Officer", "Platform Engineering Manager"],
+          "target_industries": ["Technology", "Finance", "Healthcare", "Retail", "Media"],
+          "keywords": ["MLOps", "model deployment", "ML infrastructure", "AI pipeline", "model monitoring", "model serving", "data drift", "AI operations", "machine learning engineering"],
+          "integration": ["AWS SageMaker", "Azure ML", "Vertex AI", "Kubernetes", "Docker", "MLflow", "Weights & Biases"],
+          "pricing_model": "Project-based or infrastructure retainer"
+        },
+        {
+          "id": "sw_data_platform",
+          "name": "AI-Ready Data Platform",
+          "tagline": "Unify, clean, and prepare your data for AI at enterprise scale",
+          "description": "Build a modern data foundation that makes your organization AI-ready. We design and implement data lakes, warehouses, and real-time streaming pipelines — with quality, governance, and lineage built in. Your AI and ML projects are only as good as your data; we make sure your data is production-ready.",
+          "key_features": [
+            "Data lake and warehouse architecture design",
+            "Real-time and batch ETL/ELT pipelines",
+            "Data quality, validation, and monitoring",
+            "Metadata management and data lineage",
+            "Role-based access control and data masking",
+            "Feature store for ML teams"
+          ],
+          "use_cases": [
+            "Centralizing data from 20+ fragmented systems",
+            "Building a real-time customer 360 view",
+            "Creating training datasets for ML models",
+            "Enabling self-serve analytics for business teams",
+            "Meeting data governance and audit requirements",
+            "Reducing data engineering bottlenecks"
+          ],
+          "target_roles": ["Chief Data Officer", "VP of Engineering", "Head of Data", "Director of Analytics", "CTO"],
+          "target_industries": ["Finance", "Healthcare", "Retail", "Manufacturing", "Technology", "Logistics"],
+          "keywords": ["data platform", "data lake", "data warehouse", "ETL pipeline", "data engineering", "big data", "data infrastructure", "data governance", "feature store", "real-time data"],
+          "integration": ["Snowflake", "Databricks", "BigQuery", "AWS", "Azure", "Apache Kafka", "dbt", "Airflow"],
+          "pricing_model": "Project-based or managed service"
+        }
+      ]
+    }
+  ]
+}

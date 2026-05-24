@@ -20,46 +20,61 @@ class MessagePersonalizer:
         
         self.client = Groq(api_key=api_key)
     
-    def _generate_email_prompt(self, lead: Dict, enrichment: Dict, variation: str) -> str:
-        """Generate prompt for email personalization"""
+    def _generate_email_prompt(self, lead: Dict, enrichment: Dict, variation: str, product_context: str = "") -> str:
+        """Generate prompt for email personalization, optionally grounded in product context"""
         pain_points = enrichment.get('pain_points', [])
         triggers = enrichment.get('buying_triggers', [])
         comments = lead.get('comments', '')
-        
+        challenge = lead.get('challenge', '')
+        interest_area = lead.get('interest_area', '')
+
+        sender_name = os.getenv("SENDER_NAME", "[Your Name]")
+        model_name = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile") # Allows overriding model via .env
+
         pain_point_text = ", ".join(pain_points[:2]) if pain_points else "operational challenges"
         trigger_text = triggers[0] if triggers else "business growth"
-        
+
         if variation == "A":
-            style = "direct and value-focused"
-            approach = "Start with a relevant pain point, then offer a solution"
+            style = "conversational, highly engaging, and direct"
+            approach = "Acknowledge their challenge/interest right away. Show enthusiasm, and clearly list the specific solutions we offer that directly map to their domain."
         else:
-            style = "consultative and insight-driven"
-            approach = "Start with an industry insight, then connect to their challenges"
-        
-        # Add comments context if available
-        comments_context = f"\n- Lead's Comments/Interest: {comments}" if comments else ""
-        
-        return f"""Write a personalized cold email (maximum 120 words) to {lead.get('full_name')}, {lead.get('role_title')} at {lead.get('company_name')}.
+            style = "insightful, friendly, and consultative"
+            approach = "Start with an observation about their industry, list our relevant solutions, and explain the tangible value they bring."
 
-Context:
+        # Build context lines
+        comments_context = f"\n- Lead's Comments: {comments}" if comments else ""
+        challenge_context = f"\n- Their Stated Challenge: {challenge}" if challenge else ""
+        interest_context = f"\n- Area of Interest: {interest_area}" if interest_area else ""
+
+        # RAG product context block
+        product_section = ""
+        if product_context:
+            product_section = f"""
+Our Solutions for their Domain:
+{product_context}
+
+CRITICAL: You MUST list all the relevant solutions provided above in the email. Briefly mention how each one solves their specific challenge or fits their interest. Weave them in naturally so it sounds like a helpful recommendation, not a catalog.
+"""
+
+        return f"""Write a highly engaging, personalized B2B cold email to {lead.get('full_name')}, {lead.get('role_title')} at {lead.get('company_name')}.
+
+Lead Context:
 - Industry: {lead.get('industry')}
-- Persona: {enrichment.get('persona_tag')}
 - Key Pain Point: {pain_point_text}
-- Buying Trigger: {trigger_text}
-- Company Size: {enrichment.get('company_size')}{comments_context}
-
+- Buying Trigger: {trigger_text}{comments_context}{challenge_context}{interest_context}
+{product_section}
+Sender Name: {sender_name}
 Style: {style}
 Approach: {approach}
-{f"Important: Reference their specific interest or comment: '{comments}'" if comments else ""}
 
 Requirements:
-- Maximum 120 words
-- Reference the pain point or trigger naturally
-{f"- Acknowledge their comment/interest: '{comments}'" if comments else ""}
-- Include clear CTA: "15-minute call"
-- Professional tone
-- No hallucinated facts
-- Subject line included
+- Make it sound human, not robotic or dull. Use a conversational tone.
+- Do NOT use generic phrases like "I noticed your company is expanding". Be specific!
+- Explicitly mention the solutions we provide (from the 'Our Solutions' section) that map to their domain/interest.
+- Focus on the value these solutions bring to their specific challenge.
+- End with a low-friction Call to Action (e.g., "Open to a quick 15-min chat next week?")
+- Sign off using the Sender Name: {sender_name}
+- Include an eye-catching Subject line
 
 Format:
 Subject: [subject line]
@@ -95,27 +110,34 @@ Requirements:
 - Conversational LinkedIn tone
 - No hallucinated facts"""
     
-    def generate_email(self, lead: Dict, enrichment: Dict, variation: str = "A") -> Dict:
+    def generate_email(self, lead: Dict, enrichment: Dict, variation: str = "A", product_context: str = "") -> Dict:
         """
-        Generate personalized email.
-        
+        Generate personalized email, grounded in relevant product context from RAG.
+
         Args:
             lead: Lead dictionary
             enrichment: Enrichment dictionary
             variation: "A" or "B" for A/B testing
-        
+            product_context: Formatted product context string from RAGEngine.build_short_context()
+
         Returns:
             Dictionary with subject and body
         """
-        prompt = self._generate_email_prompt(lead, enrichment, variation)
-        
+        prompt = self._generate_email_prompt(lead, enrichment, variation, product_context)
+
         try:
+            model_name = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
             response = self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=model_name,
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert B2B sales copywriter. Write compelling, personalized emails that are concise and actionable. Always respect the word limit."
+                        "content": (
+                            "You are an expert B2B sales copywriter. Write compelling, "
+                            "personalized emails that reference specific products and solutions "
+                            "relevant to the lead's situation. Always respect the word limit. "
+                            "Never invent features — only reference what is provided."
+                        )
                     },
                     {
                         "role": "user",
@@ -123,11 +145,11 @@ Requirements:
                     }
                 ],
                 temperature=0.8,
-                max_tokens=300
+                max_tokens=400
             )
-            
+
             content = response.choices[0].message.content.strip()
-            
+
             # Parse subject and body
             if "Subject:" in content:
                 parts = content.split("\n\n", 1)
@@ -136,21 +158,44 @@ Requirements:
             else:
                 subject = f"Quick question about {lead.get('industry')} operations"
                 body = content
-            
+
             return {
                 "subject": subject,
                 "body": body,
                 "word_count": len(body.split())
             }
-            
+
         except Exception as e:
             print(f"⚠️ Email generation failed: {e}")
-            # Fallback template
             return {
-                "subject": f"Improving {enrichment.get('persona_tag', 'operations')} at {lead.get('company_name')}",
-                "body": f"Hi {lead.get('full_name').split()[0]},\n\nI noticed {lead.get('company_name')} is in the {lead.get('industry')} space. Many {enrichment.get('persona_tag', 'leaders')} I work with face challenges with {enrichment.get('pain_points', ['operational efficiency'])[0]}.\n\nWe've helped similar companies streamline these processes. Would you be open to a quick 15-minute call to explore if we could help?\n\nBest regards",
+                "subject": f"Solutions for {enrichment.get('persona_tag', 'your team')} at {lead.get('company_name')}",
+                "body": (
+                    f"Hi {lead.get('full_name', '').split()[0]},\n\n"
+                    f"I noticed {lead.get('company_name')} is in the {lead.get('industry')} space. "
+                    f"Many {enrichment.get('persona_tag', 'leaders')} I work with face challenges with "
+                    f"{enrichment.get('pain_points', ['operational efficiency'])[0]}.\n\n"
+                    f"We have solutions specifically built for this. Would you be open to a quick "
+                    f"15-minute call to explore?\n\nBest regards"
+                ),
                 "word_count": 60
             }
+
+    def generate_all_messages(self, lead: Dict, enrichment: Dict, product_context: str = "") -> Dict:
+        """
+        Generate all message variations for a lead.
+
+        Args:
+            lead: Lead dictionary
+            enrichment: Enrichment dictionary
+            product_context: RAG-retrieved product context string (from RAGEngine.build_short_context())
+
+        Returns:
+            Dictionary with email_a, email_b
+        """
+        return {
+            "email_a": self.generate_email(lead, enrichment, "A", product_context),
+            "email_b": self.generate_email(lead, enrichment, "B", product_context),
+        }
     
     def generate_linkedin_dm(self, lead: Dict, enrichment: Dict, variation: str = "A") -> Dict:
         """
@@ -198,18 +243,6 @@ Requirements:
                 "message": f"Hi {first_name}, I work with {enrichment.get('persona_tag', 'leaders')} in {lead.get('industry')} on {enrichment.get('pain_points', ['operational challenges'])[0]}. Would you be open to a quick call?",
                 "word_count": 25
             }
-    
-    def generate_all_messages(self, lead: Dict, enrichment: Dict) -> Dict:
-        """
-        Generate all message variations for a lead (email only).
-        
-        Returns:
-            Dictionary with email_a, email_b
-        """
-        return {
-            "email_a": self.generate_email(lead, enrichment, "A"),
-            "email_b": self.generate_email(lead, enrichment, "B")
-        }
 
 
 if __name__ == "__main__":

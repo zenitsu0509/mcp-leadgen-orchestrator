@@ -15,6 +15,7 @@ from lead_generator import LeadGenerator
 from enrichment import LeadEnricher
 from messaging import MessagePersonalizer
 from outreach import OutreachService
+from rag_engine import RAGEngine
 
 load_dotenv()
 
@@ -23,7 +24,13 @@ app = FastAPI(title="Lead Generation API", version="1.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://92e249f97c50.ngrok-free.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://92e249f97c50.ngrok-free.app",
+        "http://n8nhim002.eastus.azurecontainer.io:5678",
+        "http://n8nhim002.eastus.azurecontainer.io",
+        "*"  # Allow all origins since n8n makes server-side HTTP calls (not browser CORS)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,6 +38,9 @@ app.add_middleware(
 
 # Initialize database
 db = Database()
+
+# Initialize RAG engine (loads product knowledge base + embeddings at startup)
+rag = RAGEngine()
 
 # Pipeline state
 pipeline_state = {
@@ -279,15 +289,25 @@ def execute_pipeline(
             pipeline_state["running"] = False
             return
         
+        # Stage 2.5: RAG — find most relevant products for this lead
+        print("🔍 Stage 2.5: Searching product database (RAG)...")
+        enrichment_data = db.get_lead_with_enrichment(current_lead['id'])
+        rag_query = rag.build_query_from_lead(current_lead, enrichment_data)
+        print(f"  RAG query: \"{rag_query[:80]}...\"")
+        rag_results = rag.search(rag_query, top_k=4)
+        product_context = rag.build_short_context(rag_results)
+        matched_products = [r['name'] for r in rag_results]
+        print(f"  ✅ Matched products: {matched_products}\n")
+
         # Stage 3: Generate messages for the single lead
         print("✉️ Stage 3: Generating messages...")
         pipeline_state["current_stage"] = "Generating messages"
-        
+
         personalizer = MessagePersonalizer()
         print(f"  Generating messages for {current_lead['full_name']}...")
-        
+
         enrichment = db.get_lead_with_enrichment(current_lead['id'])
-        messages = personalizer.generate_all_messages(current_lead, enrichment)
+        messages = personalizer.generate_all_messages(current_lead, enrichment, product_context)
         
         # Store messages
         db.insert_message(current_lead['id'], 'email', 'A', 

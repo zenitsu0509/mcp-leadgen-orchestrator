@@ -63,12 +63,14 @@ class LeadGenerator:
     def process_external_lead(self, lead_data: Dict) -> Dict:
         """
         Process and validate lead data from external sources (Facebook Lead Ads, Google Forms).
-        
+
         Args:
-            lead_data: Dictionary containing lead information from external source
-                Required fields: name, email, phone, job_title, company
-                Optional fields: source, linkedin_url, company_website, industry, country
-        
+            lead_data: Dictionary containing lead information from external source.
+                Required fields: name, email, company
+                Optional fields: job_title, phone, source, interest_area, challenge,
+                                 company_size, linkedin_url, company_website,
+                                 industry, country, comments
+
         Returns:
             Processed and validated lead dictionary
         """
@@ -79,22 +81,49 @@ class LeadGenerator:
         job_title = lead_data.get('job_title', '').strip()
         company_name = lead_data.get('company', '').strip()
         comments = lead_data.get('comments', '').strip()
-        
+
+        # New fields from the updated Google Form
+        interest_area = lead_data.get('interest_area', '').strip()
+        challenge = lead_data.get('challenge', '').strip()
+        company_size = lead_data.get('company_size', '').strip()
+
         # Validate required fields
         if not all([full_name, email, company_name]):
             raise ValueError("Missing required fields: name, email, and company are required")
-        
+
         if not self._validate_email(email):
             raise ValueError(f"Invalid email format: {email}")
-        
-        # Optional fields with defaults
+
+        # Optional fields with smart defaults
         source = lead_data.get('source', 'external')
-        linkedin_url = lead_data.get('linkedin_url') or self._generate_linkedin_url(full_name)
-        company_website = lead_data.get('company_website') or self._generate_company_website(company_name)
-        industry = lead_data.get('industry') or self._infer_industry(job_title, company_name)
+
+        # Use provided LinkedIn URL, or generate one from name
+        provided_linkedin = lead_data.get('linkedin_url', '').strip()
+        linkedin_url = (
+            provided_linkedin
+            if provided_linkedin and self._validate_url(provided_linkedin)
+            else self._generate_linkedin_url(full_name)
+        )
+
+        # Use provided company website (domain), or generate from company name
+        provided_website = lead_data.get('company_website', '').strip()
+        company_website = (
+            provided_website
+            if provided_website
+            else self._generate_company_website(company_name)
+        )
+
+        # Use provided industry from form dropdown, or infer it
+        provided_industry = lead_data.get('industry', '').strip()
+        industry = (
+            provided_industry
+            if provided_industry
+            else self._infer_industry(job_title, company_name)
+        )
+
         country = lead_data.get('country', 'United States')
-        
-        # Build processed lead
+
+        # Build processed lead — includes all new fields for RAG enrichment
         processed_lead = {
             "full_name": full_name,
             "company_name": company_name,
@@ -106,9 +135,13 @@ class LeadGenerator:
             "linkedin_url": linkedin_url,
             "country": country,
             "source": source,
-            "comments": comments
+            "comments": comments,
+            # New intent fields — fed directly into RAG search query
+            "interest_area": interest_area,
+            "challenge": challenge,
+            "company_size": company_size,
         }
-        
+
         return processed_lead
     
     def get_validation_summary(self, leads: List[Dict]) -> Dict:
