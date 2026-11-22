@@ -1,306 +1,170 @@
-# MCP-Powered Lead Gen + Enrichment + Outreach System
+# Lead Generation & Outreach Orchestrator
 
-A full-stack lead generation and outreach automation system built with Model Context Protocol (MCP), n8n orchestration, Groq AI, and a real-time monitoring dashboard.
+A portfolio project for turning Google Sheets lead submissions into researched, reviewed, personalized email drafts. The system combines n8n ingestion, a FastAPI control plane, a durable worker, specialized AI agents, PostgreSQL/SQLite persistence, SMTP delivery, and a Next.js review dashboard.
 
-## 🎯 Features
+New leads are deduplicated by email and queued for background processing. By default, generated email drafts wait for human approval. Delivery can stay in dry-run mode until SMTP has been configured and the operator deliberately enables live delivery.
 
-- **Lead Generation**: Generate 200+ realistic leads with valid contact information
-- **AI Enrichment**: Enrich leads with company insights, personas, and pain points using Groq LLM
-- **Message Personalization**: Create personalized emails and LinkedIn DMs with A/B variations
-- **Smart Outreach**: Send messages with retry logic, rate limiting, and error handling
-- **Real-time Monitoring**: Track pipeline progress with a modern React dashboard
-- **MCP Integration**: Orchestrate workflow through Model Context Protocol
-- **n8n Workflow**: Visual workflow automation and orchestration
+## Architecture
 
-## 🏗️ Architecture
+The supplied diagram shows the original integration concept. The Mermaid diagram below reflects the current implementation and separates the API, worker, database, and dashboard roles.
 
+![Original architecture diagram](docs/architecture-overview.png)
+
+```mermaid
+flowchart LR
+  Sheets[Google Sheets] --> N8N[n8n trigger and field mapping]
+  N8N -->|POST /pipeline/run| API[FastAPI control plane]
+  Browser[Next.js dashboard] -->|same-origin API proxy| API
+  API --> DB[(SQLite local / PostgreSQL production)]
+  DB --> Jobs[Durable pipeline jobs]
+  Jobs --> Worker[Background worker]
+  Worker --> Research[Research and catalog retrieval agent]
+  Worker --> Writer[Email drafting agent]
+  Writer --> QA[Email quality and grounding checks]
+  QA -->|draft| Review[Human approval queue]
+  Review --> Worker
+  Worker --> Mailer[Mailing agent and SMTP]
+  Mailer --> Recipient[Lead inbox]
+  API -. optional tool interface .-> MCP[MCP server]
+  Research --> Groq[Groq LLM / RAG catalog]
+  Writer --> Groq
+  Worker -->|suppression check| DB
+  Mailer -->|delivery audit| DB
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│   n8n       │─────▶│  MCP Server  │─────▶│   Backend   │
-│  Workflow   │      │   (Tools)    │      │  Services   │
-└─────────────┘      └──────────────┘      └─────────────┘
-                            │                      │
-                            │                      ▼
-                            │               ┌─────────────┐
-                            │               │   SQLite    │
-                            │               │   Database  │
-                            │               └─────────────┘
-                            ▼
-                     ┌──────────────┐
-                     │   Frontend   │
-                     │  Dashboard   │
-                     └──────────────┘
-```
 
-## 📋 Prerequisites
+### Processing lifecycle
 
-- Python 3.10+
-- Node.js 18+
-- n8n (remote self-hosted instance)
-- Groq API key (free tier available at https://console.groq.com)
-- ngrok account (free tier available at https://ngrok.com)
+1. n8n maps a Google Sheets row to the API lead schema and posts it to `/pipeline/run`.
+2. FastAPI validates required fields, rejects previously seen or suppressed email addresses, stores the lead, and creates a durable job.
+3. The worker researches the lead, retrieves relevant catalog products, drafts two email variants, and runs quality checks.
+4. Drafts are saved as plain text and responsive HTML. With the default `REQUIRE_EMAIL_APPROVAL=true`, the lead waits in `PENDING_APPROVAL`.
+5. An operator compares Variations A and B, selects one, and either approves it or enters revision notes. Rewrites run as durable jobs and are quality-checked before the updated draft returns to review.
+6. After approval, the worker rechecks suppression and prior delivery state, then records the selected variation's SMTP attempt and result.
 
-## 🚀 Quick Start
+## What is implemented
 
-### 1. Clone and Setup
+- **Agent workflow:** separate research, email drafting, quality review, and mailing agents.
+- **Durable jobs:** jobs and progress survive API restarts; the worker claims jobs from the database.
+- **Idempotency:** duplicate sheet triggers for an email do not create a second lead or job.
+- **Review before send:** approval is enabled by default; the dashboard shows a rendered email preview.
+- **Safer delivery:** multipart plain-text and HTML messages, sender/reply-to configuration, SMTP timeouts, and delivery audit records.
+- **Suppression groundwork:** suppressed addresses are checked before processing and again before sending. An authenticated API endpoint can add an address to the suppression list.
+- **API boundary:** optional bearer-token authentication in development and required API credentials in production; dashboard credentials are kept server-side by the Next.js proxy.
+- **Storage and migrations:** SQLite for local development, PostgreSQL for Compose deployment, and Alembic migrations.
+- **Observability:** health, metrics, job status, and per-lead message endpoints.
+- **Reproducibility:** Docker Compose services for PostgreSQL, migration, API, worker, and dashboard, plus CI checks.
+
+## Quick start: local development
+
+Requirements: Python 3.10+, Node.js 18+, and npm.
 
 ```bash
-cd e:\intern-assigment\linkind-mcp
-```
-
-### 2. Configure Environment
-
-```bash
-# Copy example environment file
-cp .env.example .env
-
-# Edit .env and add your Groq API key
-# GROQ_API_KEY=your_key_here
-```
-
-### 3. Install Python Dependencies
-
-```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
-
-# Install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 4. Install Frontend Dependencies
-
-```bash
 npm install
+cp .env.example .env
 ```
 
-### 5. Initialize Database
+Set `GROQ_API_KEY` in `.env` to enable AI enrichment and drafting. Optional semantic retrieval dependencies are installed with `pip install -r requirements-ml.txt`; without them the catalog uses keyword search. For safe local work, keep:
+
+```dotenv
+DRY_RUN_MODE=true
+REQUIRE_EMAIL_APPROVAL=true
+```
+
+Start the API (it starts the local worker thread by default):
 
 ```bash
-python backend/database.py
-```
-
-### 6. Start the Services
-
-**Terminal 1 - MCP Server:**
-```bash 
-python mcp_server/server.py
-```
-
-**Terminal 2 - API Backend:**
-```bash
+source .venv/bin/activate
 python backend/api.py
 ```
 
-**Terminal 3 - Frontend:**
+In another terminal, start the dashboard:
+
 ```bash
 npm run dev
 ```
 
-### 7. Access the Applications
+Open <http://localhost:3000>. The API is at <http://localhost:8000>; API docs are at <http://localhost:8000/docs> in development. To receive rows from a remote n8n server, expose port 8000 through a secure tunnel and configure the workflow’s URL. Configure bearer authentication in both the API and n8n before exposing a non-demo instance.
 
-- **Frontend Dashboard**: http://localhost:3000
-- **API Backend**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **n8n Editor**: Your remote n8n instance URL
+For an isolated synthetic dashboard dataset, run `python backend/seed_demo_data.py`; it creates `data/demo_leads.db` with `example.com` addresses. To serve it separately, start another API with `DATABASE_PATH=./data/demo_leads.db API_PORT=8001 python backend/api.py`.
 
-### 8. Setup ngrok Tunnel
+## Docker Compose deployment
 
-To connect your local API with the remote n8n instance:
+Copy `.env.example` to `.env`, then set unique values for `POSTGRES_PASSWORD`, `POSTGRES_URL`, `API_AUTH_TOKEN`, and `ADMIN_API_TOKEN`. Set your Groq and SMTP credentials as needed. The `POSTGRES_URL` hostname must be `db` for Compose networking. For non-ASCII or reserved password characters, URL-encode the password in the connection URL.
 
 ```bash
-# In a new terminal, start ngrok
-ngrok http 8000
+docker compose up --build
 ```
 
-Copy the ngrok URL (e.g., `https://abc123.ngrok-free.app`) and update your n8n workflow nodes to use this URL.
+Compose applies the Alembic migration before starting the API and worker. The dashboard is available on port 3000 and the API on port 8000. The API requires a bearer token in production; configure the n8n HTTP Request node to send `Authorization: Bearer <API_AUTH_TOKEN>`. The dashboard proxy supplies API credentials from the server environment and does not send them to browser JavaScript.
 
-## 📁 Project Structure
+Before live delivery, configure a valid Gmail app password or another SMTP provider. Keep `DRY_RUN_MODE=true` while reviewing drafts and verifying configuration. `DRY_RUN_MODE=false` allows approved drafts to reach SMTP. Do not place secrets in the workflow JSON or commit `.env`.
 
-```
-linkind-mcp/
-├── backend/              # Python backend services
-│   ├── api.py           # FastAPI application
-│   ├── database.py      # SQLite database setup
-│   ├── lead_generator.py # Lead generation logic
-│   ├── enrichment.py    # Lead enrichment service
-│   ├── messaging.py     # Message generation
-│   └── outreach.py      # Message sending
-├── mcp_server/          # MCP server implementation
-│   ├── server.py        # MCP server main
-│   └── tools.py         # MCP tool definitions
-├── frontend/            # Next.js React frontend
-│   ├── pages/          # Next.js pages
-│   ├── components/     # React components
-│   └── styles/         # CSS styles
-├── data/               # SQLite database storage
-├── .env.example        # Environment template
-└── README.md           # This file
-```
+## API overview
 
-## 🔧 Configuration
+Operational endpoints require `Authorization: Bearer <API_AUTH_TOKEN>` when a token is configured; production requires one.
 
-### Dry Run vs Live Run
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Database-backed health check |
+| `GET` | `/metrics` | Lead, delivery, and queue metrics |
+| `GET` | `/leads` | Paginated lead list; supports status filter |
+| `GET` | `/leads/{id}` | Lead and latest enrichment details |
+| `GET` | `/leads/{id}/messages` | Saved email variants and preview content |
+| `POST` | `/pipeline/run` | Validate, deduplicate, and queue a lead |
+| `GET` | `/jobs/{job_id}` | Durable job status and progress |
+| `POST` | `/leads/{id}/approve` | Queue delivery of the reviewed draft; body accepts `{"variation":"A"}` or `{"variation":"B"}` |
+| `POST` | `/leads/{id}/revise` | Queue an LLM rewrite using `{"variation":"A","feedback":"..."}` |
+| `POST` | `/suppression` | Add an address to the do-not-contact list (admin token) |
 
-Toggle between modes in the frontend or set in `.env`:
+The Google Sheets workflow should map fields such as `name`, `email`, `company`, `job_title`, `company_website`, `industry`, `interest_area`, `challenge`, `company_size`, `linkedin_url`, and `comments` into `lead_data`. Empty required values are rejected with HTTP 422; duplicate email submissions return a duplicate result rather than an error.
+
+## Configuration reference
+
+See [.env.example](.env.example) for all supported variables. The main controls are:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `GROQ_API_KEY` | empty | Enables AI research/drafting |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat model |
+| `DRY_RUN_MODE` | `true` | Prevents SMTP delivery |
+| `REQUIRE_EMAIL_APPROVAL` | `true` | Holds drafts until dashboard approval |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` | Gmail defaults/empty credentials | SMTP transport settings |
+| `SMTP_FROM_EMAIL`, `SENDER_NAME`, `REPLY_TO_EMAIL` | sender defaults | Message identity and reply address |
+| `DATABASE_URL` | empty | Optional SQLAlchemy database URL; SQLite is used otherwise |
+| `API_AUTH_TOKEN` | empty in development | API bearer token; mandatory in production |
+| `ADMIN_API_TOKEN` | empty in development | Protects destructive/admin operations |
+
+## Tests and quality checks
 
 ```bash
-DRY_RUN_MODE=true   # Logs messages without sending
-DRY_RUN_MODE=false  # Actually sends messages
+.venv/bin/python -m unittest discover -s tests -v
+npx tsc --noEmit
+npm run build
 ```
 
-### Rate Limiting
+The GitHub Actions workflow runs Python unit tests, TypeScript checks, and a Next.js production build. Docker services can be checked with `docker compose config` before startup.
 
-Configure in `.env`:
+## Current boundaries and next milestone
 
-```bash
-RATE_LIMIT_PER_MINUTE=10  # Max messages per minute
-MAX_RETRIES=2             # Retry attempts for failed sends
-```
+This milestone does **not** ingest inbound replies, detect out-of-office messages or bounces, or schedule follow-up emails. The suppression table and pre-send checks provide groundwork for those controls, but they do not determine whether a recipient has replied. The follow-up milestone should add inbound mailbox/webhook ingestion, normalized reply and bounce events, an explicit outreach state machine, and a scheduled job that rechecks reply, bounce, unsubscribe, and suppression state immediately before each follow-up.
 
-### Email Configuration
+Production deployment also needs operational choices for secret management, backups/restore, SMTP provider quotas, monitoring/alerting, privacy retention, and verified unsubscribe/compliance handling. The Compose file is a reproducible single-host baseline, not a managed high-availability deployment.
 
-For live email sending, configure SMTP:
+## Resume-ready project summary
 
-```bash
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your_email@gmail.com
-SMTP_PASSWORD=your_app_password  # Use Gmail App Password
-```
+> Built a multi-agent lead research and email outreach platform with n8n ingestion, a FastAPI control plane, durable PostgreSQL job processing, idempotent lead intake, human-approved personalized email, SMTP audit trails, and a Next.js operations dashboard. Added API authentication, schema migrations, Docker Compose deployment, and CI checks.
 
-## 🎮 Usage
+## Repository map
 
-### How the System Works
-
-The system now operates through automated triggers from external sources:
-
-1. **Lead Capture**:
-   - **Google Sheets**: Add a new row with lead information
-   - **Facebook Lead Ads**: User submits an instant form
-   
-2. **Automatic Processing**:
-   - n8n detects the new lead from trigger
-   - Processes and normalizes the lead data
-   - Sends to your local API via ngrok
-   - API enriches the lead with AI insights
-   - Generates personalized messages
-   - Sends outreach (email/LinkedIn)
-
-3. **Monitor Progress**:
-   - Open frontend dashboard at http://localhost:3000
-   - View real-time metrics and lead status
-   - Check enrichment data and generated messages
-
-### Pipeline Stages
-
-1. **Process Lead** → Receives and validates external lead data
-2. **Enrich Lead** → Adds AI-generated company insights and personas
-3. **Generate Messages** → Creates personalized email + LinkedIn DM
-4. **Send Outreach** → Delivers messages (or logs in dry-run mode)
-
-### Testing with Sample Data
-
-Add a test lead to your Google Sheet with:
-- **Name**: John Smith
-- **Email**: john.smith@company.com
-- **Phone**: +1-555-0123
-- **Job Title**: VP of Sales
-- **Company**: TechCorp Solutions
-- **Comments**: Interested in improving team productivity and automation tools
-
-The n8n workflow will automatically detect and process it, generating personalized messages based on the comments provided.
-
-### n8n Workflow Setup
-
-1. **Access your n8n instance** (remote self-hosted)
-2. **Import the workflow**: Navigate to n8n and import `n8n/n8n-workflow.json`
-3. **Configure triggers**:
-   - **Google Sheets Trigger**: Connect your Google account and select the spreadsheet with lead data
-     - Required columns: `name`, `email`, `phone`, `job_title`, `company`, `comments`
-   - **Facebook Lead Ads Trigger**: Connect your Facebook account and select the form
-     - Required fields: full_name, email, phone_number, job_title, company_name, comments
-4. **Update API endpoints**: Replace placeholder URLs in all HTTP Request nodes with your ngrok URL:
-   - Run Pipeline: `https://YOUR-NGROK-URL.ngrok-free.app/pipeline/run`
-   - Get Metrics: `https://YOUR-NGROK-URL.ngrok-free.app/metrics`
-   - Get Leads: `https://YOUR-NGROK-URL.ngrok-free.app/leads`
-5. **Activate the workflow**
-
-## 🧪 Testing
-
-### Test Lead Processing
-
-```bash
-python backend/lead_generator.py
-```
-
-### Test API Endpoint
-
-```bash
-curl -X POST http://localhost:8000/pipeline/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dry_run": true,
-    "enrichment_mode": "offline",
-    "lead_count": 200,
-    "channel": "both",
-    "lead_data": {
-      "name": "Jane Doe",
-      "email": "jane@example.com",
-      "phone": "+1-555-0199",
-      "job_title": "CTO",
-      "company": "Innovation Labs",
-      "comments": "Looking for AI solutions to streamline operations",
-      "source": "test"
-    }
-  }'
-```
-
-## 📊 Database Schema
-
-Leads are tracked through these statuses:
-
-- `NEW` → Lead created
-- `ENRICHED` → Lead enriched with insights
-- `MESSAGED` → Messages generated
-- `SENT` → Outreach sent successfully
-- `FAILED` → Process failed
-
-## 🆓 Free Resources Used
-
-- **Groq**: Free tier LLM API (100 requests/minute)
-- **SQLite**: Local database (no limits)
-- **n8n**: Self-hosted open-source (free)
-- **ngrok**: Free tier for tunneling (https://ngrok.com)
-- **External Lead Sources**: Facebook Lead Ads, Google Sheets
-- **FastAPI**: Python web framework
-- **Next.js**: React framework
-<<<<<<< HEAD
-
-## 🔐 Security Notes
-
-- Keep your ngrok URL private - it exposes your local API
-- Rotate ngrok URLs regularly (free tier URLs change on restart)
-- Use environment variables for sensitive data
-- Enable authentication on n8n in production
-- Never commit `.env` files to version control
-
-## 📝 License
-
-MIT
-
-## 🤝 Contributing
-
-This is a take-home assignment project. For production use, consider adding:
-- Unit tests
-- WebSocket/SSE for real-time updates
-- Multi-tenant support
-- Export functionality
-- Advanced targeting rules
-- **Mailhog** (optional): Local SMTP testing server
+- `backend/agents/` — research, email drafting, quality checks, and delivery agents
+- `backend/api.py` — FastAPI routes and local worker lifecycle
+- `backend/database.py` — database schema and persistence operations
+- `backend/worker.py` — durable job consumer
+- `backend/migrations/` — Alembic schema history
+- `pages/` — Next.js dashboard and server-side API proxy
+- `n8n/` — workflow export and setup notes
+- `mcp_server/` — optional MCP tool server
+- `docs/architecture-overview.png` — supplied architecture diagram

@@ -1,391 +1,253 @@
-"""
-FastAPI backend for the lead generation system.
-Provides REST API for frontend monitoring and pipeline execution.
-"""
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
-import os
-from dotenv import load_dotenv
-import uvicorn
+"""FastAPI control plane for the lead research and outreach worker."""
 
+import hmac
+import logging
+import os
+import threading
+from contextlib import asynccontextmanager
+from typing import Optional
+
+import uvicorn
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from config import Config
 from database import Database, LeadStatus
 from lead_generator import LeadGenerator
-from enrichment import LeadEnricher
-from messaging import MessagePersonalizer
-from outreach import OutreachService
 from rag_engine import RAGEngine
+from worker import PipelineWorker
 
 load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("leadgen.api")
 
-app = FastAPI(title="Lead Generation API", version="1.0.0")
+db = Database()
+rag = RAGEngine()
+worker_thread = None
+worker_instance = None
 
-# CORS middleware
+
+@asynccontextmanager
+async def lifespan(_app):
+    global worker_thread, worker_instance
+    if Config.PIPELINE_WORKER_ENABLED:
+        worker_instance = PipelineWorker(db, rag)
+        worker_thread = threading.Thread(
+            target=worker_instance.run_forever, name="leadgen-worker", daemon=True
+        )
+        worker_thread.start()
+    yield
+    if worker_instance:
+        worker_instance.stop()
+    if worker_thread and worker_thread.is_alive():
+        worker_thread.join(timeout=5)
+
+
+production = Config.APP_ENV.lower() == "production"
+app = FastAPI(
+    title="Lead Generation API", version="2.0.0", lifespan=lifespan,
+    docs_url=None if production else "/docs",
+    redoc_url=None if production else "/redoc",
+    openapi_url=None if production else "/openapi.json",
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://92e249f97c50.ngrok-free.app",
-        "http://n8nhim002.eastus.azurecontainer.io:5678",
-        "http://n8nhim002.eastus.azurecontainer.io",
-        "*"  # Allow all origins since n8n makes server-side HTTP calls (not browser CORS)
-    ],
+    allow_origins=Config.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Admin-Token"],
 )
 
-# Initialize database
-db = Database()
 
-# Initialize RAG engine (loads product knowledge base + embeddings at startup)
-rag = RAGEngine()
-
-# Pipeline state
-pipeline_state = {
-    "running": False,
-    "current_stage": None,
-    "progress": 0
-}
+def require_api_token(authorization: Optional[str] = Header(default=None)):
+    if Config.APP_ENV.lower() == "production" and not Config.API_AUTH_TOKEN:
+        raise HTTPException(status_code=503, detail="API_AUTH_TOKEN must be configured in production")
+    if Config.API_AUTH_TOKEN:
+        expected = f"Bearer {Config.API_AUTH_TOKEN}"
+        if not authorization or not hmac.compare_digest(authorization, expected):
+            raise HTTPException(status_code=401, detail="Valid bearer token required")
 
 
-# Request models
+def require_admin_token(x_admin_token: Optional[str] = Header(default=None)):
+    if Config.APP_ENV.lower() == "production" and not Config.ADMIN_API_TOKEN:
+        raise HTTPException(status_code=503, detail="ADMIN_API_TOKEN must be configured in production")
+    if Config.ADMIN_API_TOKEN and (
+        not x_admin_token or not hmac.compare_digest(x_admin_token, Config.ADMIN_API_TOKEN)
+    ):
+        raise HTTPException(status_code=401, detail="Valid admin token required")
+
+
 class PipelineRequest(BaseModel):
-    dry_run: bool = True
-    enrichment_mode: str = "offline"
-    lead_count: int = 200
-    channel: str = "both"
-    lead_data: Optional[dict] = None  # External lead data from Facebook/Google Forms
+    dry_run: bool = Config.DRY_RUN_MODE
+    enrichment_mode: str = Field(default="offline", pattern="^(offline|ai)$")
+    channel: str = Field(default="email", pattern="^(email)$")
+    require_approval: bool = Config.REQUIRE_EMAIL_APPROVAL
+    lead_data: dict
 
 
-class LeadResponse(BaseModel):
-    id: int
-    full_name: str
-    company_name: str
-    role_title: str
-    industry: str
-    email: str
-    status: str
+class ApprovalRequest(BaseModel):
+    dry_run: bool = Config.DRY_RUN_MODE
+    variation: str = Field(default="A", pattern="^[AB]$")
 
 
-# Routes
+class RevisionRequest(BaseModel):
+    variation: str = Field(pattern="^[AB]$")
+    feedback: str = Field(min_length=3, max_length=2000)
+
+
 @app.get("/")
 async def root():
-    """API root"""
-    return {
-        "name": "Lead Generation API",
-        "version": "1.0.0",
-        "status": "running"
-    }
+    return {"name": "Lead Generation API", "version": "2.0.0", "status": "running"}
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+    try:
+        db.get_metrics()
+        return {"status": "healthy", "database": "reachable"}
+    except Exception as exc:
+        logger.exception("health check failed")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
 
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(require_api_token)])
 async def get_metrics():
-    """Get pipeline metrics"""
     metrics = db.get_metrics()
-    return {
-        "total_leads": metrics["total_leads"],
-        "leads_enriched": metrics["leads_enriched"],
-        "messages_generated": metrics["messages_generated"],
-        "messages_sent": metrics["messages_sent"],
-        "messages_failed": metrics["messages_failed"],
-        "status_breakdown": metrics["status_breakdown"],
-        "pipeline_running": pipeline_state["running"],
-        "current_stage": pipeline_state["current_stage"],
-        "progress": pipeline_state["progress"]
-    }
+    return {**metrics, **db.get_pipeline_summary()}
 
 
 @app.get("/leads")
 async def get_leads(
     status: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _auth: None = Depends(require_api_token),
 ):
-    """Get leads with optional status filter"""
+    status_enum = None
     if status:
         try:
             status_enum = LeadStatus(status)
-            leads = db.get_leads_by_status(status_enum)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
-    else:
-        leads = db.get_leads_by_status()
-    
-    # Apply pagination
-    paginated_leads = leads[offset:offset + limit]
-    
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from exc
     return {
-        "total": len(leads),
-        "limit": limit,
-        "offset": offset,
-        "leads": paginated_leads
+        "total": db.count_leads(status_enum), "limit": limit, "offset": offset,
+        "leads": db.get_leads_by_status(status_enum, limit=limit, offset=offset),
     }
 
 
-@app.get("/leads/{lead_id}")
+@app.get("/leads/{lead_id}", dependencies=[Depends(require_api_token)])
 async def get_lead(lead_id: int):
-    """Get a specific lead with enrichment data"""
     lead = db.get_lead_with_enrichment(lead_id)
-    
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    
     return lead
 
 
-@app.get("/leads/{lead_id}/messages")
+@app.get("/leads/{lead_id}/messages", dependencies=[Depends(require_api_token)])
 async def get_lead_messages(lead_id: int):
-    """Get generated messages for a specific lead"""
-    # First check if lead exists
-    lead = db.get_lead_with_enrichment(lead_id)
+    if not db.get_lead(lead_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return {"lead_id": lead_id, "messages": db.get_lead_messages(lead_id)}
+
+
+@app.post("/pipeline/run", status_code=202, dependencies=[Depends(require_api_token)])
+async def run_pipeline(request: PipelineRequest):
+    try:
+        processed = LeadGenerator().process_external_lead(request.lead_data)
+    except ValueError as exc:
+        logger.info("pipeline input rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    job = db.create_pipeline_job(processed, {
+        "dry_run": request.dry_run,
+        "enrichment_mode": request.enrichment_mode,
+        "channel": request.channel,
+        "require_approval": request.require_approval,
+    })
+    if job.get("suppressed"):
+        return {"message": "Lead is on the suppression list", "status": "suppressed"}
+    if not job["created"]:
+        return {
+            "message": "Duplicate lead ignored; this email has already been received",
+            "status": "duplicate", "lead_id": job.get("lead_id"),
+            "job_id": job.get("job_id"), "job_status": job.get("job_status"),
+        }
+    logger.info("pipeline job queued", extra={"job_id": job["job_id"], "lead_id": job["lead_id"]})
+    return {"message": "Pipeline job queued", "status": "queued", **job}
+
+
+@app.get("/jobs/{job_id}", dependencies=[Depends(require_api_token)])
+async def get_job(job_id: str):
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.post("/leads/{lead_id}/approve", status_code=202, dependencies=[Depends(require_api_token)])
+async def approve_email(lead_id: int, request: ApprovalRequest):
+    lead = db.get_lead(lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    
-    messages = db.get_lead_messages(lead_id)
-    
-    return {
-        "lead_id": lead_id,
-        "messages": messages
-    }
-
-
-@app.post("/pipeline/run")
-async def run_pipeline(
-    request: PipelineRequest,
-    background_tasks: BackgroundTasks
-):
-    """Run the complete pipeline"""
-    if pipeline_state["running"]:
-        raise HTTPException(status_code=409, detail="Pipeline already running")
-    
-    # Run pipeline in background
-    background_tasks.add_task(
-        execute_pipeline,
-        request.lead_count,
-        request.enrichment_mode,
-        request.dry_run,
-        request.channel,
-        request.lead_data
+    job = db.enqueue_delivery_job(
+        lead_id, dry_run=request.dry_run, variation=request.variation
     )
-    
-    return {
-        "message": "Pipeline started",
-        "config": {
-            "lead_count": request.lead_count,
-            "enrichment_mode": request.enrichment_mode,
-            "dry_run": request.dry_run,
-            "channel": request.channel
-        }
-    }
+    if job.get("missing"):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not job.get("created") and not job.get("job_id"):
+        raise HTTPException(status_code=409, detail=f"Lead cannot be approved from status {job.get('status')}")
+    return {"message": "Approved delivery queued", **job}
 
 
-@app.post("/pipeline/stop")
+@app.post("/leads/{lead_id}/revise", status_code=202, dependencies=[Depends(require_api_token)])
+async def revise_email(lead_id: int, request: RevisionRequest,
+                       idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    feedback = request.feedback.strip()
+    if len(feedback) < 3:
+        raise HTTPException(status_code=422, detail="Feedback must contain at least 3 non-space characters")
+    job = db.enqueue_revision_job(
+        lead_id, variation=request.variation, feedback=feedback,
+        idempotency_key=idempotency_key,
+    )
+    if job.get("missing"):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if job.get("status") and not job.get("job_id"):
+        raise HTTPException(status_code=409, detail=f"Lead cannot be revised from status {job['status']}")
+    return {"message": "Email revision queued", **job}
+
+
+@app.post("/pipeline/stop", dependencies=[Depends(require_api_token)])
 async def stop_pipeline():
-    """Stop the pipeline"""
-    pipeline_state["running"] = False
-    pipeline_state["current_stage"] = None
-    
-    return {"message": "Pipeline stopped"}
+    # Persisted jobs are not silently discarded; this endpoint reports queued/running state.
+    summary = db.get_pipeline_summary()
+    return {"message": "Jobs remain durable; stop the worker to pause processing", **summary}
 
 
 @app.delete("/leads")
-async def clear_leads():
-    """Clear all leads (for testing)"""
+async def clear_leads(x_admin_token: Optional[str] = Header(default=None)):
+    if Config.APP_ENV.lower() == "production" and not Config.ADMIN_API_TOKEN:
+        raise HTTPException(status_code=403, detail="Lead deletion is disabled in production")
+    if Config.ADMIN_API_TOKEN and (
+        not x_admin_token or not hmac.compare_digest(x_admin_token, Config.ADMIN_API_TOKEN)
+    ):
+        raise HTTPException(status_code=401, detail="Valid admin token required")
     db.clear_all_data()
-    pipeline_state["running"] = False
-    pipeline_state["current_stage"] = None
-    pipeline_state["progress"] = 0
-    return {"message": "All leads cleared"}
+    return {"message": "Lead data cleared"}
 
 
-@app.get("/pipeline/status")
-async def get_pipeline_status():
-    """Get current pipeline state (for debugging)"""
-    return {
-        "running": pipeline_state["running"],
-        "current_stage": pipeline_state["current_stage"],
-        "progress": pipeline_state["progress"]
-    }
-
-
-# Pipeline execution
-def execute_pipeline(
-    lead_count: int,
-    enrichment_mode: str,
-    dry_run: bool,
-    channel: str,
-    lead_data: Optional[dict] = None
-):
-    """Execute the complete pipeline"""
-    print(f"\n🚀 Starting pipeline execution...")
-    print(f"  Lead Count: {lead_count}")
-    print(f"  Enrichment Mode: {enrichment_mode}")
-    print(f"  Dry Run: {dry_run}")
-    print(f"  Channel: {channel}")
-    print(f"  External Lead: {bool(lead_data)}\n")
-    
-    pipeline_state["running"] = True
-    pipeline_state["progress"] = 0
-    
-    try:
-        # Stage 1: Process lead data
-        print("📝 Stage 1: Processing lead data...")
-        pipeline_state["current_stage"] = "Processing leads"
-        pipeline_state["progress"] = 10
-        
-        generator = LeadGenerator()
-        
-        if lead_data:
-            # Process single external lead from Facebook/Google Forms
-            print(f"  Processing external lead from {lead_data.get('source', 'external')}...")
-            try:
-                processed_lead = generator.process_external_lead(lead_data)
-                lead_id = db.insert_lead(processed_lead)
-                processed_lead['id'] = lead_id
-                print(f"  ✅ Processed and inserted lead: {processed_lead['full_name']} (ID: {lead_id})")
-            except ValueError as e:
-                print(f"  ❌ Error processing lead: {e}")
-                pipeline_state["running"] = False
-                return
-        else:
-            print("  ⚠️  No lead data provided - pipeline requires external lead data")
-            print("  Pipeline expects lead data from Facebook Lead Ads or Google Forms\n")
-            pipeline_state["running"] = False
-            return
-        
-        pipeline_state["progress"] = 25
-        
-        # Get the lead ID of the just-inserted lead
-        current_lead_id = processed_lead['id']
-        print(f"  ✅ Lead processing complete (ID: {current_lead_id})\n")
-        
-        # Stage 2: Enrich the single lead
-        print("🔍 Stage 2: Enriching lead...")
-        pipeline_state["current_stage"] = "Enriching lead"
-        
-        enricher = LeadEnricher(mode=enrichment_mode)
-        new_leads = db.get_leads_by_status(LeadStatus.NEW)
-        
-        # Find the specific lead we just inserted
-        current_lead = next((lead for lead in new_leads if lead['id'] == current_lead_id), None)
-        
-        if current_lead:
-            print(f"  Enriching lead: {current_lead['full_name']}...")
-            enrichment = enricher.enrich_lead(current_lead)
-            db.insert_enrichment(current_lead['id'], enrichment)
-            db.update_lead_status(current_lead['id'], LeadStatus.ENRICHED)
-            pipeline_state["progress"] = 50
-            print(f"  ✅ Enriched lead\n")
-        else:
-            print(f"  ❌ Could not find lead to enrich")
-            pipeline_state["running"] = False
-            return
-        
-        # Stage 2.5: RAG — find most relevant products for this lead
-        print("🔍 Stage 2.5: Searching product database (RAG)...")
-        enrichment_data = db.get_lead_with_enrichment(current_lead['id'])
-        rag_query = rag.build_query_from_lead(current_lead, enrichment_data)
-        print(f"  RAG query: \"{rag_query[:80]}...\"")
-        rag_results = rag.search(rag_query, top_k=4)
-        product_context = rag.build_short_context(rag_results)
-        matched_products = [r['name'] for r in rag_results]
-        print(f"  ✅ Matched products: {matched_products}\n")
-
-        # Stage 3: Generate messages for the single lead
-        print("✉️ Stage 3: Generating messages...")
-        pipeline_state["current_stage"] = "Generating messages"
-
-        personalizer = MessagePersonalizer()
-        print(f"  Generating messages for {current_lead['full_name']}...")
-
-        enrichment = db.get_lead_with_enrichment(current_lead['id'])
-        messages = personalizer.generate_all_messages(current_lead, enrichment, product_context)
-        
-        # Store messages
-        db.insert_message(current_lead['id'], 'email', 'A', 
-                        f"{messages['email_a']['subject']}\n\n{messages['email_a']['body']}")
-        db.insert_message(current_lead['id'], 'email', 'B', 
-                        f"{messages['email_b']['subject']}\n\n{messages['email_b']['body']}")
-        
-        db.update_lead_status(current_lead['id'], LeadStatus.MESSAGED)
-        pipeline_state["progress"] = 75
-        print(f"  ✅ Generated messages\n")
-        
-        # Stage 4: Send outreach for the single lead
-        print("📤 Stage 4: Sending outreach...")
-        pipeline_state["current_stage"] = "Sending outreach"
-        
-        outreach = OutreachService(dry_run=dry_run)
-        print(f"  Sending to {current_lead['full_name']}...")
-        
-        # Retrieve the AI-generated messages from database
-        messages = db.get_lead_messages(current_lead['id'])
-        
-        if not messages:
-            print(f"  ⚠️ No messages found in database, using fallback")
-            messages = {
-                'email_a': {
-                    'subject': f"Question about {current_lead['industry']}",
-                    'body': f"Hi {current_lead['full_name'].split()[0]},\n\nWould you be open to a 15-minute call?\n\nBest regards"
-                }
-            }
-        
-        results = outreach.send_outreach(current_lead, messages, channel)
-        
-        # Update status
-        all_success = all(r['status'] == 'success' for r in results.values())
-        if all_success:
-            db.update_lead_status(current_lead['id'], LeadStatus.SENT)
-            print(f"  ✅ Successfully sent outreach")
-        else:
-            db.update_lead_status(current_lead['id'], LeadStatus.FAILED)
-            print(f"  ❌ Failed to send outreach")
-        
-        pipeline_state["progress"] = 100
-        pipeline_state["current_stage"] = "Complete"
-        print(f"  ✅ Outreach complete\n")
-        
-        print("🎉 Pipeline execution complete!")
-        print(f"  Final Status: {pipeline_state['current_stage']}")
-        print(f"  Progress: {pipeline_state['progress']}%\n")
-        
-    except Exception as e:
-        error_msg = f"Error: {str(e)}"
-        pipeline_state["current_stage"] = error_msg
-        print(f"\n❌ Pipeline error: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    finally:
-        pipeline_state["running"] = False
-        print(f"Pipeline state: running={pipeline_state['running']}, stage={pipeline_state['current_stage']}\n")
+@app.post("/suppression", dependencies=[Depends(require_api_token), Depends(require_admin_token)])
+async def suppress_email(payload: dict):
+    email = str(payload.get("email", "")).strip()
+    reason = str(payload.get("reason", "manual")).strip()
+    if "@" not in email:
+        raise HTTPException(status_code=422, detail="A valid email is required")
+    db.add_suppression(email, reason, source="api")
+    return {"status": "suppressed"}
 
 
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", 8000))
-    print(f"\n{'='*60}")
-    print(f"🚀 Starting Lead Generation API")
-    print(f"{'='*60}")
-    print(f"📍 Server: http://localhost:{port}")
-    print(f"📚 API Docs: http://localhost:{port}/docs")
-    print(f"🔧 Database: {db.db_path}")
-    print(f"{'='*60}\n")
-    
-    # Check Groq API key
-    groq_key = os.getenv("GROQ_API_KEY")
-    if not groq_key or groq_key == "your_groq_api_key_here":
-        print("⚠️  WARNING: GROQ_API_KEY not configured!")
-        print("   AI enrichment and message generation will fail.")
-        print("   Set GROQ_API_KEY in .env file\n")
-    else:
-        print(f"✅ Groq API key configured\n")
-    
+    logger.info("starting API", extra={"port": port, "database": db.db_path})
     uvicorn.run(app, host="0.0.0.0", port=port)

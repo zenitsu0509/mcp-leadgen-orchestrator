@@ -3,7 +3,7 @@ import Head from 'next/head';
 import axios from 'axios';
 import { RefreshCw, Database, Mail, MessageSquare, CheckCircle, XCircle, Eye, Filter, Users, TrendingUp } from 'lucide-react';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/proxy';
 
 interface Metrics {
   total_leads: number;
@@ -37,6 +37,9 @@ interface LeadMessages {
   [key: string]: {
     subject?: string;
     body?: string;
+    html_body?: string;
+    revision?: number;
+    review_feedback?: string | null;
     message?: string;
   };
 }
@@ -44,12 +47,20 @@ interface LeadMessages {
 export default function Home() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [totalLeadCount, setTotalLeadCount] = useState(0);
+  const [leadLoadError, setLeadLoadError] = useState('');
+  const [refreshingLeads, setRefreshingLeads] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [selectedLeadMessages, setSelectedLeadMessages] = useState<LeadMessages | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [filterSource, setFilterSource] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [approvingEmail, setApprovingEmail] = useState(false);
+  const [revisingEmail, setRevisingEmail] = useState(false);
+  const [selectedVariation, setSelectedVariation] = useState<'A' | 'B'>('A');
+  const [reviewFeedback, setReviewFeedback] = useState('');
+  const [approvalMessage, setApprovalMessage] = useState('');
 
   const fetchMetrics = async () => {
     try {
@@ -63,9 +74,22 @@ export default function Home() {
   const fetchLeads = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/leads?limit=100`);
+      if (!Array.isArray(response.data.leads)) throw new Error('API response did not include a leads list.');
       setLeads(response.data.leads);
-    } catch (error) {
+      setTotalLeadCount(Number(response.data.total) || response.data.leads.length);
+      setLeadLoadError('');
+    } catch (error: any) {
       console.error('Failed to fetch leads:', error);
+      setLeadLoadError(error?.response?.data?.detail || error?.message || 'Could not load leads from the API.');
+    }
+  };
+
+  const refreshDashboard = async () => {
+    setRefreshingLeads(true);
+    try {
+      await Promise.all([fetchLeads(), fetchMetrics()]);
+    } finally {
+      setRefreshingLeads(false);
     }
   };
 
@@ -97,11 +121,68 @@ export default function Home() {
   const handleViewLead = async (lead: Lead) => {
     setSelectedLead(lead);
     setSelectedLeadMessages(null);
+    setSelectedVariation('A');
+    setReviewFeedback('');
+    setApprovalMessage('');
     await fetchLeadMessages(lead.id);
   };
 
+  const approveEmail = async () => {
+    if (!selectedLead || !confirm(`Approve Variation ${selectedVariation} and send the email to ${selectedLead.email}?`)) return;
+    setApprovingEmail(true);
+    setApprovalMessage('');
+    try {
+      await axios.post(`${API_BASE_URL}/leads/${selectedLead.id}/approve`, {
+        variation: selectedVariation,
+      });
+      setApprovalMessage(`Variation ${selectedVariation} approved. Email delivery has been queued.`);
+      setSelectedLead({ ...selectedLead, status: 'SENDING' });
+      await fetchLeads();
+      await fetchMetrics();
+    } catch (error: any) {
+      setApprovalMessage(error?.response?.data?.detail || 'Could not queue email delivery.');
+    } finally {
+      setApprovingEmail(false);
+    }
+  };
+
+  const requestRewrite = async () => {
+    if (!selectedLead || !reviewFeedback.trim()) return;
+    setRevisingEmail(true);
+    setApprovalMessage(`Rewriting Variation ${selectedVariation}…`);
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/leads/${selectedLead.id}/revise`,
+        { variation: selectedVariation, feedback: reviewFeedback.trim() },
+        { headers: { 'Idempotency-Key': crypto.randomUUID() } },
+      );
+      const jobId = response.data.job_id;
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const jobResponse = await axios.get(`${API_BASE_URL}/jobs/${jobId}`);
+        const job = jobResponse.data;
+        if (job.status === 'COMPLETED') {
+          await fetchLeadMessages(selectedLead.id);
+          setReviewFeedback('');
+          setApprovalMessage(`Variation ${selectedVariation} updated. Review it below before sending.`);
+          return;
+        }
+        if (job.status === 'FAILED' || job.status === 'SUPPRESSED') {
+          throw new Error(job.error_message || `Rewrite ${job.status.toLowerCase()}.`);
+        }
+      }
+      setApprovalMessage('Rewrite is still running. Close and reopen this lead to see the updated draft.');
+    } catch (error: any) {
+      setApprovalMessage(error?.response?.data?.detail || error?.message || 'Could not rewrite the email.');
+    } finally {
+      setRevisingEmail(false);
+      await fetchMetrics();
+    }
+  };
+
   const filteredLeads = leads.filter(lead => {
-    if (filterSource !== 'all' && lead.source !== filterSource) return false;
+    if (filterSource === 'facebook' && !['facebook', 'facebook_leads'].includes(lead.source || '')) return false;
+    if (filterSource === 'google_sheets' && lead.source !== 'google_sheets') return false;
     if (filterStatus !== 'all' && lead.status !== filterStatus) return false;
     return true;
   });
@@ -126,6 +207,7 @@ export default function Home() {
       case 'NEW': return 'bg-gray-700 text-gray-200';
       case 'ENRICHED': return 'bg-blue-900 text-blue-200';
       case 'MESSAGED': return 'bg-purple-900 text-purple-200';
+      case 'PENDING_APPROVAL': return 'bg-amber-900 text-amber-200';
       case 'SENT': return 'bg-green-900 text-green-200';
       case 'FAILED': return 'bg-red-900 text-red-200';
       default: return 'bg-gray-700 text-gray-200';
@@ -171,10 +253,11 @@ export default function Home() {
                   )}
                 </button>
                 <button
-                  onClick={fetchLeads}
-                  className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md"
+                  onClick={refreshDashboard}
+                  disabled={refreshingLeads}
+                  className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md disabled:opacity-50"
                 >
-                  <RefreshCw className="w-4 h-4" />
+                  <RefreshCw className={`w-4 h-4 ${refreshingLeads ? 'animate-spin' : ''}`} />
                   Refresh Now
                 </button>
                 <button
@@ -238,7 +321,7 @@ export default function Home() {
                   className="w-full px-3 py-2 bg-gray-700 border border-gray-600 text-gray-200 rounded-md focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="all">All Sources</option>
-                  <option value="facebook_leads">Facebook Lead Ads</option>
+                  <option value="facebook">Facebook Lead Ads</option>
                   <option value="google_sheets">Google Sheets</option>
                 </select>
               </div>
@@ -256,17 +339,27 @@ export default function Home() {
                   <option value="NEW">New</option>
                   <option value="ENRICHED">Enriched</option>
                   <option value="MESSAGED">Messaged</option>
+                  <option value="PENDING_APPROVAL">Awaiting Review</option>
                   <option value="SENT">Sent</option>
+                  <option value="FAILED">Failed</option>
+                  <option value="SUPPRESSED">Suppressed</option>
                 </select>
               </div>
             </div>
           </div>
 
+          {leadLoadError && (
+            <div role="alert" className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-red-700 bg-red-950/60 px-4 py-3 text-sm text-red-200">
+              <span>Could not load leads: {leadLoadError}</span>
+              <button onClick={refreshDashboard} className="shrink-0 underline">Retry</button>
+            </div>
+          )}
+
           {/* Metrics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
             <MetricCard
               title="Total Leads"
-              value={filteredLeads.length}
+              value={totalLeadCount}
               icon={<Database className="w-6 h-6" />}
               color="bg-blue-500"
             />
@@ -299,9 +392,9 @@ export default function Home() {
           {/* Leads Table */}
           <div className="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">Leads ({filteredLeads.length})</h2>
-              <div className="text-sm text-gray-400">
-                {autoRefresh ? 'Auto-refresh every 10 seconds' : 'Auto-refresh paused'}
+              <h2 className="text-lg font-semibold text-white">Leads ({filteredLeads.length} shown of {totalLeadCount})</h2>
+              <div className="flex items-center gap-3 text-sm text-gray-400">
+                <span>{autoRefresh ? 'Auto-refresh every 10 seconds' : 'Auto-refresh paused'}</span>
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -385,7 +478,7 @@ export default function Home() {
           {/* Lead Details Modal */}
           {selectedLead && (
             <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-              <div className="bg-gray-800 rounded-lg max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto border border-gray-700">
+              <div className="bg-gray-800 rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto border border-gray-700">
                 <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between sticky top-0 bg-gray-800">
                   <h3 className="text-lg font-semibold text-white">Lead Details</h3>
                   <button
@@ -508,18 +601,73 @@ export default function Home() {
                                 const variation = key.replace('email_', '').toUpperCase();
                                 return (
                                   <div key={key} className={`${index > 0 ? 'mt-4 pt-4 border-t border-gray-700' : ''}`}>
-                                    <div className="bg-purple-900/30 px-3 py-2 rounded-t-md">
-                                      <p className="text-xs font-medium text-purple-300">Variation {variation}</p>
+                                    <div className={`px-3 py-2 rounded-t-md flex items-center justify-between ${selectedVariation === variation ? 'bg-purple-800/60 ring-1 ring-purple-400' : 'bg-purple-900/30'}`}>
+                                      <div>
+                                        <p className="text-xs font-medium text-purple-300">Variation {variation}{value.revision && value.revision > 1 ? ` · revision ${value.revision}` : ''}</p>
+                                        {value.review_feedback && <p className="mt-1 text-xs text-purple-200">Latest note: {value.review_feedback}</p>}
+                                      </div>
+                                      {selectedLead.status === 'PENDING_APPROVAL' && (
+                                        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-white">
+                                          <input
+                                            type="radio"
+                                            name="email-variation"
+                                            value={variation}
+                                            checked={selectedVariation === variation}
+                                            onChange={() => setSelectedVariation(variation === 'B' ? 'B' : 'A')}
+                                            className="accent-purple-400"
+                                          />
+                                          Choose to send
+                                        </label>
+                                      )}
                                     </div>
-                                    <div className="bg-gray-900 p-3 rounded-b-md">
+                                    <div className={`bg-gray-900 p-3 rounded-b-md ${selectedLead.status === 'PENDING_APPROVAL' && selectedVariation === variation ? 'ring-1 ring-purple-400' : ''}`}>
                                       <p className="text-xs text-gray-400 mb-1">Subject:</p>
                                       <p className="text-sm font-medium text-gray-100 mb-3">{value.subject}</p>
-                                      <p className="text-xs text-gray-400 mb-1">Body:</p>
-                                      <p className="text-sm text-gray-300 whitespace-pre-wrap">{value.body}</p>
+                                      {value.html_body ? (
+                                        <iframe
+                                          title={`Email variation ${variation} preview`}
+                                          sandbox=""
+                                          srcDoc={value.html_body}
+                                          className="mt-3 h-[440px] w-full rounded-lg border border-gray-700 bg-white"
+                                        />
+                                      ) : (
+                                        <>
+                                          <p className="text-xs text-gray-400 mb-1">Body:</p>
+                                          <p className="text-sm text-gray-300 whitespace-pre-wrap">{value.body}</p>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 );
                               })}
+                          </div>
+                        )}
+
+                        {selectedLead.status === 'PENDING_APPROVAL' && (
+                          <div className="rounded-lg border border-amber-700/60 bg-amber-950/30 p-4">
+                            <h5 className="text-sm font-semibold text-amber-200">Request changes</h5>
+                            <p className="mt-1 text-xs text-gray-300">
+                              Add the points you want included or explain what should change in Variation {selectedVariation}. The previous version remains saved.
+                            </p>
+                            <textarea
+                              value={reviewFeedback}
+                              onChange={event => setReviewFeedback(event.target.value)}
+                              disabled={revisingEmail}
+                              maxLength={2000}
+                              rows={4}
+                              placeholder="For example: mention their interest in voice AI, make the opening less formal, and keep the call request to one sentence."
+                              className="mt-3 w-full rounded-md border border-gray-600 bg-gray-900 p-3 text-sm text-gray-100 placeholder:text-gray-500 focus:border-amber-400 focus:outline-none disabled:opacity-60"
+                            />
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                              <span className="text-xs text-gray-400">{reviewFeedback.length}/2000 characters</span>
+                              <button
+                                onClick={requestRewrite}
+                                disabled={revisingEmail || !reviewFeedback.trim()}
+                                className="rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {revisingEmail ? 'Rewriting…' : `Reject & rewrite Variation ${selectedVariation}`}
+                              </button>
+                            </div>
                           </div>
                         )}
 
@@ -558,7 +706,19 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="px-6 py-4 border-t border-gray-700 bg-gray-900 flex justify-end">
+                <div className="px-6 py-4 border-t border-gray-700 bg-gray-900 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    {selectedLead.status === 'PENDING_APPROVAL' && (
+                      <button
+                        onClick={approveEmail}
+                        disabled={approvingEmail || revisingEmail}
+                        className="px-4 py-2 bg-emerald-700 text-white rounded-md hover:bg-emerald-600 disabled:opacity-50"
+                      >
+                        {approvingEmail ? 'Queueing…' : `Approve Variation ${selectedVariation} & send`}
+                      </button>
+                    )}
+                    {approvalMessage && <span className="text-sm text-gray-300">{approvalMessage}</span>}
+                  </div>
                   <button
                     onClick={() => setSelectedLead(null)}
                     className="px-4 py-2 bg-gray-700 text-gray-200 rounded-md hover:bg-gray-600"

@@ -23,6 +23,17 @@ class LeadGenerator:
         pattern = r'^https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
         return bool(re.match(pattern, url))
 
+    @staticmethod
+    def _field(data: Dict, *aliases: str) -> str:
+        """Read a sheet/form field despite differences in case and punctuation."""
+        normalize = lambda value: re.sub(r"[^a-z0-9]", "", str(value).lower())
+        indexed = {normalize(key): value for key, value in data.items()}
+        for alias in aliases:
+            value = indexed.get(normalize(alias))
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return ""
+
     def _generate_linkedin_url(self, full_name: str) -> str:
         """Generate a LinkedIn URL from full name"""
         name_part = full_name.lower().replace(' ', '-')
@@ -75,30 +86,66 @@ class LeadGenerator:
             Processed and validated lead dictionary
         """
         # Extract and clean required fields
-        full_name = lead_data.get('name', '').strip()
-        email = lead_data.get('email', '').strip()
-        phone = lead_data.get('phone', '').strip()
-        job_title = lead_data.get('job_title', '').strip()
-        company_name = lead_data.get('company', '').strip()
-        comments = lead_data.get('comments', '').strip()
+        full_name = self._field(
+            lead_data, 'name', 'full_name', 'full name', 'contact_name',
+            'contact name', 'lead_name', 'lead name', 'name of lead', 'column 2',
+        )
+        if not full_name:
+            first_name = self._field(lead_data, 'first_name', 'first name')
+            last_name = self._field(lead_data, 'last_name', 'last name')
+            full_name = ' '.join(part for part in (first_name, last_name) if part)
+        email = self._field(
+            lead_data, 'email', 'email address', 'email_address', 'work email',
+            'business email', 'contact email', 'email id', 'gmail', 'column 3',
+        )
+        phone = self._field(lead_data, 'phone', 'phone number', 'phone_number', 'mobile number', 'mobile', 'column 6')
+        job_title = self._field(
+            lead_data, 'job_title', 'job title', 'job tittle', 'job title / role',
+            'role', 'position', 'title', 'column 7', 'column 5',
+        )
+        company_name = self._field(
+            lead_data, 'company', 'company_name', 'company name', 'organization',
+            'organisation', 'account name', 'business name', 'employer', 'column 4',
+        )
+        comments = self._field(lead_data, 'comments', 'comment', 'notes', 'message')
 
         # New fields from the updated Google Form
-        interest_area = lead_data.get('interest_area', '').strip()
-        challenge = lead_data.get('challenge', '').strip()
-        company_size = lead_data.get('company_size', '').strip()
+        interest_area = self._field(
+            lead_data, 'interest_area', 'interest area', 'area of interest',
+            'what area are you most interested in', 'column 9',
+        )
+        challenge = self._field(
+            lead_data, 'challenge', 'biggest challenge', 'current challenge',
+            "what's your biggest challenge right now", 'what is your biggest challenge right now',
+            'column 10',
+        )
+        company_size = self._field(lead_data, 'company_size', 'company size', 'column 11')
 
         # Validate required fields
-        if not all([full_name, email, company_name]):
-            raise ValueError("Missing required fields: name, email, and company are required")
+        missing = [
+            label for label, value in (
+                ('name', full_name), ('email', email), ('company', company_name)
+            ) if not value
+        ]
+        if missing:
+            received_columns = lead_data.get('source_columns') or list(lead_data.keys())
+            received_keys = ', '.join(str(key) for key in received_columns) or '(none)'
+            raise ValueError(
+                f"Missing required fields: {', '.join(missing)}. "
+                f"Received column names: {received_keys}"
+            )
 
         if not self._validate_email(email):
             raise ValueError(f"Invalid email format: {email}")
 
         # Optional fields with smart defaults
-        source = lead_data.get('source', 'external')
+        source = self._field(lead_data, 'source') or 'external'
 
         # Use provided LinkedIn URL, or generate one from name
-        provided_linkedin = lead_data.get('linkedin_url', '').strip()
+        provided_linkedin = self._field(
+            lead_data, 'linkedin_url', 'linkedin url', 'linkedin profile url',
+            'linkedin profile url optional', 'linkedin profile url optional star',
+        )
         linkedin_url = (
             provided_linkedin
             if provided_linkedin and self._validate_url(provided_linkedin)
@@ -106,7 +153,7 @@ class LeadGenerator:
         )
 
         # Use provided company website (domain), or generate from company name
-        provided_website = lead_data.get('company_website', '').strip()
+        provided_website = self._field(lead_data, 'company_website', 'company website', 'company domain', 'website')
         company_website = (
             provided_website
             if provided_website
@@ -114,14 +161,14 @@ class LeadGenerator:
         )
 
         # Use provided industry from form dropdown, or infer it
-        provided_industry = lead_data.get('industry', '').strip()
+        provided_industry = self._field(lead_data, 'industry', 'sector', 'column 8')
         industry = (
             provided_industry
             if provided_industry
             else self._infer_industry(job_title, company_name)
         )
 
-        country = lead_data.get('country', 'United States')
+        country = self._field(lead_data, 'country', 'location') or 'United States'
 
         # Build processed lead — includes all new fields for RAG enrichment
         processed_lead = {

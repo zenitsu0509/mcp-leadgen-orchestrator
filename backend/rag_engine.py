@@ -5,6 +5,7 @@ Falls back to keyword search if sentence-transformers is not installed.
 """
 import json
 import os
+import re
 import numpy as np
 from typing import List, Dict, Optional
 
@@ -47,7 +48,11 @@ class RAGEngine:
             from sentence_transformers import SentenceTransformer
 
             print("🔄 Loading sentence-transformer model (all-MiniLM-L6-v2)...")
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            offline = os.getenv("HF_HUB_OFFLINE", "false").lower() in ("1", "true", "yes")
+            self.model = SentenceTransformer(
+                "all-MiniLM-L6-v2",
+                local_files_only=offline,
+            )
             self.embeddings = self.model.encode(
                 self.chunk_texts, convert_to_numpy=True, show_progress_bar=False
             )
@@ -63,6 +68,14 @@ class RAGEngine:
             print(
                 "⚠️  sentence-transformers not found. Using keyword search fallback.\n"
                 "   Run: pip install sentence-transformers"
+            )
+        except Exception as e:
+            self.use_semantic = False
+            self.model = None
+            self.embeddings = None
+            print(
+                "⚠️  Could not load the sentence-transformer model. "
+                f"Using keyword search fallback ({e})."
             )
 
     # ------------------------------------------------------------------
@@ -244,6 +257,50 @@ class RAGEngine:
                 f"Use cases: {uc_text}"
             )
         return "\n".join(lines)
+
+    def include_requested_catalog_products(
+        self, retrieved: List[Dict], *text_sources: Optional[str]
+    ) -> List[Dict]:
+        """
+        Ensure catalog products mentioned in feedback, original draft, or lead context
+        are included in the verified products list.
+        """
+        combined = list(retrieved)
+        known = {str(product.get("name", "")).casefold() for product in combined}
+
+        combined_text = " ".join(str(s) for s in text_sources if s)
+        # Normalize unicode hyphens/dashes to standard hyphen
+        normalized_text = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]", "-", combined_text).casefold()
+        normalized_text = re.sub(r"\s+", " ", normalized_text)
+
+        for product in getattr(self, "products", []):
+            name = str(product.get("name", ""))
+            if not name:
+                continue
+            name_casefold = name.casefold()
+            if name_casefold in known:
+                continue
+
+            name_norm = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]", "-", name_casefold)
+            clean_name = re.sub(r"\s*\([^)]*\)", "", name_casefold).strip()
+            clean_name_norm = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]", "-", clean_name)
+
+            acronym_match = re.search(r"\(([^)]+)\)", name)
+            acronym = acronym_match.group(1).casefold() if acronym_match else None
+
+            matched = False
+            if name_norm in normalized_text or clean_name_norm in normalized_text:
+                matched = True
+            elif acronym and re.search(rf"\b{re.escape(acronym)}\b", normalized_text):
+                matched = True
+
+            if matched:
+                product_copy = product.copy()
+                product_copy.setdefault("relevance_score", 1.0)
+                combined.append(product_copy)
+                known.add(name_casefold)
+
+        return combined
 
 
 # ------------------------------------------------------------------

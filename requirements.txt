@@ -6,25 +6,24 @@ pydantic-settings
 python-dotenv
 
 # MCP SDK
-mcp
+mcp>=1.28,<2
 
 # Lead Generation & Data
 sqlalchemy
+alembic>=1.14,<2
 
 # AI/LLM
 groq
 
 # RAG / Semantic Search
-sentence-transformers
 numpy
 
-# Email
-aiosmtp
+# PostgreSQL production driver
+psycopg[binary]>=3.2,<4
+
+# Email uses Python's standard-library smtplib; no extra package is needed.
 
 # Utilities
 python-multipart
 aiofiles
 httpx
-
-# CORS
-fastapi-cors

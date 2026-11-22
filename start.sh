@@ -5,8 +5,15 @@ echo "Starting Lead Generation Pipeline"
 echo "============================================"
 echo ""
 
-# Activate virtual environment
-source venv/bin/activate
+# Activate the project's virtual environment
+if [ -f .venv/bin/activate ]; then
+    source .venv/bin/activate
+elif [ -f venv/bin/activate ]; then
+    source venv/bin/activate
+else
+    echo "Python virtual environment not found. Run ./setup.sh first."
+    exit 1
+fi
 
 # Start API Backend
 echo "Starting API Backend (Port 8000)..."

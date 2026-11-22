@@ -3,10 +3,10 @@ Outreach service for sending emails and LinkedIn DMs.
 Includes retry logic, rate limiting, and dry-run mode.
 """
 import os
-import asyncio
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from email.message import EmailMessage
+from email.utils import formataddr
+from email.utils import make_msgid
 from typing import Dict, Optional
 from datetime import datetime
 import time
@@ -71,6 +71,7 @@ class OutreachService:
         subject: str,
         body: str,
         lead_name: str,
+        html_body: Optional[str] = None,
         retry_count: int = 0
     ) -> Dict:
         """
@@ -86,8 +87,6 @@ class OutreachService:
         Returns:
             Result dictionary with status and message
         """
-        self._apply_rate_limit()
-        
         if self.dry_run:
             print(f"📧 [DRY RUN] Email to {lead_name} ({to_email})")
             print(f"   Subject: {subject}")
@@ -98,20 +97,39 @@ class OutreachService:
                 "channel": "email",
                 "timestamp": datetime.now().isoformat()
             }
+
+        self._apply_rate_limit()
+
+        if not self.smtp_username or not self.smtp_password or not self.from_email:
+            return {
+                "status": "failed", "message": "SMTP credentials or sender address are not configured",
+                "channel": "email", "timestamp": datetime.now().isoformat(),
+            }
+        if any(char in subject for char in "\r\n"):
+            return {
+                "status": "failed", "message": "Email subject contains invalid line breaks",
+                "channel": "email", "timestamp": datetime.now().isoformat(),
+            }
         
         try:
-            # Create message
-            msg = MIMEMultipart('alternative')
-            msg['From'] = self.from_email
+            msg = EmailMessage()
+            sender_name = os.getenv("SENDER_NAME", "")
+            msg['From'] = formataddr((sender_name, self.from_email)) if sender_name else self.from_email
             msg['To'] = to_email
             msg['Subject'] = subject
-            
-            # Add body
-            msg.attach(MIMEText(body, 'plain'))
+            reply_to = os.getenv("REPLY_TO_EMAIL", "")
+            if reply_to:
+                msg["Reply-To"] = reply_to
+            msg["Message-ID"] = make_msgid()
+            msg.set_content(body)
+            if html_body:
+                msg.add_alternative(html_body, subtype="html")
             
             # Send via SMTP
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=25) as server:
+                server.ehlo()
                 server.starttls()
+                server.ehlo()
                 server.login(self.smtp_username, self.smtp_password)
                 server.send_message(msg)
             
@@ -120,6 +138,7 @@ class OutreachService:
                 "status": "success",
                 "message": "Email sent successfully",
                 "channel": "email",
+                "provider_message_id": msg["Message-ID"],
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -131,7 +150,7 @@ class OutreachService:
             if retry_count < self.max_retries:
                 print(f"🔄 Retrying... (Attempt {retry_count + 1}/{self.max_retries})")
                 time.sleep(2 ** retry_count)  # Exponential backoff
-                return self.send_email(to_email, subject, body, lead_name, retry_count + 1)
+                return self.send_email(to_email, subject, body, lead_name, html_body, retry_count + 1)
             
             return {
                 "status": "failed",

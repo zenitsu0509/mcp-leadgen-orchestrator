@@ -11,6 +11,9 @@ Development/testing tools (generate_leads, enrich_leads, etc.) have been removed
 import asyncio
 import sys
 import os
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # Add backend directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))

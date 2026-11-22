@@ -7,6 +7,7 @@ from typing import Dict, List
 from dotenv import load_dotenv
 import json
 from groq import Groq
+from config import Config
 
 load_dotenv()
 
@@ -212,7 +213,7 @@ Focus on realistic, industry-specific insights. Be specific and actionable."""
 
         try:
             response = self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=Config.GROQ_MODEL,
                 messages=[
                     {
                         "role": "system",
@@ -224,7 +225,8 @@ Focus on realistic, industry-specific insights. Be specific and actionable."""
                     }
                 ],
                 temperature=0.7,
-                max_tokens=500
+                max_completion_tokens=2048,
+                reasoning_effort="medium"
             )
             
             content = response.choices[0].message.content.strip()
