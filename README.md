@@ -43,16 +43,27 @@ flowchart LR
 
 ## What is implemented
 
-- **Agent workflow:** separate research, email drafting, quality review, and mailing agents.
-- **Durable jobs:** jobs and progress survive API restarts; the worker claims jobs from the database.
-- **Idempotency:** duplicate sheet triggers for an email do not create a second lead or job.
-- **Review before send:** approval is enabled by default; the dashboard shows a rendered email preview.
-- **Safer delivery:** multipart plain-text and HTML messages, sender/reply-to configuration, SMTP timeouts, and delivery audit records.
-- **Suppression groundwork:** suppressed addresses are checked before processing and again before sending. An authenticated API endpoint can add an address to the suppression list.
-- **API boundary:** optional bearer-token authentication in development and required API credentials in production; dashboard credentials are kept server-side by the Next.js proxy.
-- **Storage and migrations:** SQLite for local development, PostgreSQL for Compose deployment, and Alembic migrations.
-- **Observability:** health, metrics, job status, and per-lead message endpoints.
-- **Reproducibility:** Docker Compose services for PostgreSQL, migration, API, worker, and dashboard, plus CI checks.
+- **Agent Workflow:** Specialized agents for research, product catalog retrieval, email drafting, quality & grounding review, and SMTP delivery.
+- **RAG Catalog Grounding:** Multi-product catalog retrieval (16 products across Voice AI, Analytics, and Automation) using semantic sentence-transformer embeddings with keyword fallback. Supports domain-wide product mapping (e.g. `Voice Models` expands to all voice offerings) and Unicode hyphen normalization.
+- **Durable Job Queue:** SQLite/PostgreSQL durable job storage with atomic job claiming (`FOR UPDATE SKIP LOCKED` on PostgreSQL). Jobs survive server restarts and network interruptions.
+- **Strict Email Deduplication:** Submissions are deduplicated by case-insensitive email address and idempotency keys to prevent duplicate leads or spamming recipients.
+- **Human Review & AI Rewrites:** Compare Variation A and Variation B with responsive HTML email previews. Operators can approve or provide revision notes for targeted LLM rewrites.
+- **Targeted Multi-Select & Bulk Operations:** Select specific leads via dashboard checkboxes to send or schedule outreach exclusively to them, or use 1-click **Send All Pending**.
+- **Outreach Scheduling:** Flexible delivery scheduling (+1h, +3h, tomorrow at 9:00 AM, or custom datetime) with delayed queue claiming via `scheduled_for`.
+- **Auto-Send Toggle:** Quickly switch between manual review mode and auto-dispatch mode.
+- **One-Click Lead Retry:** Instantly re-queue failed leads for processing via `POST /leads/{id}/retry` or directly from the dashboard.
+- **Reply-Aware Follow-Up Engine:**
+  - Automated 2-step follow-up sequences (step 1 check-in, step 2 breakup email).
+  - RFC 2822 email threading with `In-Reply-To`, `References`, and `Re:` subject lines.
+  - Pre-send atomic suppression verification (re-checks reply, bounce, unsubscribe, and suppression status right before delivery).
+- **Inbound Event & Mailbox Ingestion:**
+  - `POST /webhooks/inbound-email` for incoming mailbox replies.
+  - `POST /webhooks/events` for ESP delivery, bounce, and unsubscribe notifications.
+  - `InboundClassifier` deterministic rules to categorize replies, bounces, unsubscribes, and out-of-office (OOO) notes.
+  - OOO auto-delays follow-up jobs by 5 business days; replies immediately cancel pending sequences; bounces/unsubscribes automatically add the address to the suppression table.
+- **Database Backup & Recovery CLI:** `backend/backup.py` supports zero-downtime SQLite backups and compressed PostgreSQL dumps with automated retention pruning.
+- **API Security & Same-Origin Proxy:** Bearer token authentication in production; the Next.js API proxy handles tokens securely without exposing them to browser JavaScript.
+- **Full Next.js Operations Dashboard:** Real-time metrics, status filters, lead inspector, HTML preview iframes, and bulk action toolbar.
 
 ## Quick start: local development
 
@@ -109,14 +120,22 @@ Operational endpoints require `Authorization: Bearer <API_AUTH_TOKEN>` when a to
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Database-backed health check |
-| `GET` | `/metrics` | Lead, delivery, and queue metrics |
+| `GET` | `/metrics` | Lead, delivery, queue, and inbound event metrics |
 | `GET` | `/leads` | Paginated lead list; supports status filter |
 | `GET` | `/leads/{id}` | Lead and latest enrichment details |
 | `GET` | `/leads/{id}/messages` | Saved email variants and preview content |
 | `POST` | `/pipeline/run` | Validate, deduplicate, and queue a lead |
 | `GET` | `/jobs/{job_id}` | Durable job status and progress |
-| `POST` | `/leads/{id}/approve` | Queue delivery of the reviewed draft; body accepts `{"variation":"A"}` or `{"variation":"B"}` |
+| `POST` | `/leads/{id}/approve` | Queue delivery of reviewed draft (supports `scheduled_for`) |
+| `POST` | `/leads/bulk-approve` | Bulk approve & send/schedule outreach for specifically selected leads |
+| `POST` | `/leads/approve-all` | Approve and send/schedule all leads awaiting review |
+| `POST` | `/leads/{id}/retry` | Re-queue a failed lead for processing with updated catalog checks |
 | `POST` | `/leads/{id}/revise` | Queue an LLM rewrite using `{"variation":"A","feedback":"..."}` |
+| `POST` | `/leads/{id}/followup` | Manually schedule a follow-up email step for a lead |
+| `POST` | `/leads/{id}/cancel-followup` | Cancel any pending follow-up jobs for a lead |
+| `POST` | `/webhooks/inbound-email` | Ingest incoming email replies for classification and thread updating |
+| `POST` | `/webhooks/events` | Ingest ESP delivery, bounce, and unsubscribe webhook events |
+| `GET` | `/inbound-events` | List recorded inbound events and classification intent |
 | `POST` | `/suppression` | Add an address to the do-not-contact list (admin token) |
 
 The Google Sheets workflow should map fields such as `name`, `email`, `company`, `job_title`, `company_website`, `industry`, `interest_area`, `challenge`, `company_size`, `linkedin_url`, and `comments` into `lead_data`. Empty required values are rejected with HTTP 422; duplicate email submissions return a duplicate result rather than an error.
@@ -147,11 +166,35 @@ npm run build
 
 The GitHub Actions workflow runs Python unit tests, TypeScript checks, and a Next.js production build. Docker services can be checked with `docker compose config` before startup.
 
-## Current boundaries and next milestone
+## Reply-aware follow-up engine and operations
 
-This milestone does **not** ingest inbound replies, detect out-of-office messages or bounces, or schedule follow-up emails. The suppression table and pre-send checks provide groundwork for those controls, but they do not determine whether a recipient has replied. The follow-up milestone should add inbound mailbox/webhook ingestion, normalized reply and bounce events, an explicit outreach state machine, and a scheduled job that rechecks reply, bounce, unsubscribe, and suppression state immediately before each follow-up.
+- **Inbound Event & Reply Ingestion:** `POST /webhooks/inbound-email` and `POST /webhooks/events` handle incoming mailbox replies and ESP delivery/bounce events.
+- **Classification & State Machine:** Inbound events are classified into `REPLY`, `BOUNCE`, `UNSUBSCRIBE`, or `OOO`. A human reply marks the lead as `REPLIED` and immediately cancels all queued follow-ups. Bounces and unsubscribes transition the lead and automatically write to the `suppression` table.
+- **Scheduled Pre-Send Verification:** Follow-up jobs run on a durable schedule (`scheduled_for`). The worker verifies that the lead has not replied, bounced, unsubscribed, or been suppressed at the exact moment of dispatch.
+- **Thread Continuity:** Follow-up messages set `In-Reply-To` and `References` headers referencing the previous message ID and format subjects as `Re: <Original Subject>`.
+- **Database Backup & Recovery:** `backend/backup.py` supports atomic SQLite snapshots and gzip-compressed PostgreSQL dumps with retention pruning.
 
 Production deployment also needs operational choices for secret management, backups/restore, SMTP provider quotas, monitoring/alerting, privacy retention, and verified unsubscribe/compliance handling. The Compose file is a reproducible single-host baseline, not a managed high-availability deployment.
+
+## Future improvements & recommended roadmap
+
+Here are high-impact enhancements to take this orchestrator to enterprise grade:
+
+1. **Bi-Directional CRM Sync (HubSpot / Salesforce / Pipedrive / Close)**:
+   - Synchronize lead status, conversation notes, email records, and reply events directly into your CRM.
+   - Automatically create deals or update pipeline stages when a lead replies with interest.
+2. **Autonomous IMAP / Gmail API Mailbox Polling**:
+   - In addition to webhooks, add a standing background polling worker (IMAP IDLE or Gmail Pub/Sub) so self-hosted email accounts without webhook capabilities can detect replies automatically.
+3. **Smart Sending Warmup & Cadence Throttle**:
+   - Add mailbox warmup modes with daily sending caps (e.g., ramping from 20 to 100 emails/day).
+   - Randomize send intervals (e.g. 45–180 seconds between consecutive emails) and align sends with the recipient’s local business hours timezone.
+4. **Engagement Tracking (Pixel & Click-Wrap Analytics)**:
+   - Track 1x1 transparent open-tracking pixels and signed redirect URLs.
+   - Compare real open and click-through rates (CTR) between Variation A and Variation B directly on the dashboard.
+5. **Multi-Channel Fallback (LinkedIn InMail & SMS)**:
+   - If an email remains unread after step 1, automatically trigger a personalized LinkedIn connection request or InMail via the LinkedIn MCP tool / API.
+6. **AI Reply Copilot & Objection Handling**:
+   - When a prospect replies, an agent analyzes the response (e.g. pricing objection, request for demo, wrong person), searches the knowledge base, and drafts a proposed response for one-click operator approval.
 
 ## Resume-ready project summary
 

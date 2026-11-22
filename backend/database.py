@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import (
     Column, DateTime, ForeignKey, Index, Integer, MetaData, String, Table, Text,
-    and_, create_engine, func, inspect, select, update,
+    and_, create_engine, func, inspect, or_, select, update,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +30,12 @@ class LeadStatus(str, Enum):
     SENT = "SENT"
     FAILED = "FAILED"
     SUPPRESSED = "SUPPRESSED"
+    FOLLOWUP_SCHEDULED = "FOLLOWUP_SCHEDULED"
+    FOLLOWUP_SENT = "FOLLOWUP_SENT"
+    REPLIED = "REPLIED"
+    BOUNCED = "BOUNCED"
+    UNSUBSCRIBED = "UNSUBSCRIBED"
+    OOO = "OOO"
 
 
 metadata = MetaData()
@@ -111,12 +117,14 @@ pipeline_jobs = Table(
     Column("config", Text, nullable=False),
     Column("attempts", Integer, nullable=False, server_default="0"),
     Column("error_message", Text),
+    Column("scheduled_for", DateTime),
     Column("created_at", DateTime, server_default=func.current_timestamp()),
     Column("started_at", DateTime),
     Column("finished_at", DateTime),
     Column("updated_at", DateTime, server_default=func.current_timestamp()),
 )
 Index("ix_pipeline_jobs_status_created", pipeline_jobs.c.status, pipeline_jobs.c.created_at)
+Index("ix_pipeline_jobs_status_scheduled", pipeline_jobs.c.status, pipeline_jobs.c.scheduled_for)
 
 suppression = Table(
     "suppression", metadata,
@@ -125,6 +133,25 @@ suppression = Table(
     Column("source", String(100)),
     Column("created_at", DateTime, server_default=func.current_timestamp()),
 )
+
+inbound_events = Table(
+    "inbound_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("lead_id", Integer, ForeignKey("leads.id", ondelete="SET NULL"), nullable=True),
+    Column("email", String(320), nullable=False),
+    Column("event_type", String(40), nullable=False),  # reply, bounce, unsubscribe, ooo, delivery
+    Column("provider_message_id", String(500)),
+    Column("in_reply_to", String(500)),
+    Column("references_header", Text),
+    Column("subject", Text),
+    Column("body", Text),
+    Column("headers", Text),
+    Column("classified_intent", String(150)),
+    Column("created_at", DateTime, server_default=func.current_timestamp()),
+)
+Index("ix_inbound_events_email", inbound_events.c.email)
+Index("ix_inbound_events_lead_id", inbound_events.c.lead_id)
+Index("ix_inbound_events_event_type", inbound_events.c.event_type)
 
 
 class Database:
@@ -174,6 +201,7 @@ class Database:
                 "revision": "INTEGER NOT NULL DEFAULT 1", "review_feedback": "TEXT",
             },
             "outreach": {"provider_message_id": "VARCHAR(500)"},
+            "pipeline_jobs": {"scheduled_for": "TIMESTAMP"},
         }
         inspector = inspect(self.engine)
         with self.engine.begin() as connection:
@@ -270,7 +298,7 @@ class Database:
             raise
 
     def enqueue_delivery_job(self, lead_id: int, dry_run: bool = False,
-                             variation: str = "A") -> Dict:
+                             variation: str = "A", scheduled_for: Optional[datetime] = None) -> Dict:
         job_id = str(uuid.uuid4())
         key = f"delivery:{lead_id}"
         with self.engine.begin() as connection:
@@ -286,9 +314,86 @@ class Database:
             connection.execute(pipeline_jobs.insert().values(
                 id=job_id, lead_id=lead_id, action="deliver", idempotency_key=key,
                 status="PENDING", progress=0,
+                stage="Scheduled outreach" if scheduled_for else "Queued for delivery",
                 config=json.dumps({"dry_run": dry_run, "variation": variation}), attempts=0,
+                scheduled_for=scheduled_for,
             ))
         return {"created": True, "job_id": job_id, "job_status": "PENDING"}
+
+    def enqueue_retry_job(self, lead_id: int) -> Dict:
+        """Retry a failed lead by re-queueing initial processing."""
+        job_id = str(uuid.uuid4())
+        with self.engine.begin() as connection:
+            lead = connection.execute(select(leads).where(leads.c.id == lead_id)).first()
+            if not lead:
+                return {"created": False, "missing": True}
+            connection.execute(leads.update().where(leads.c.id == lead_id).values(status="NEW"))
+            config_json = json.dumps({
+                "dry_run": False,
+                "enrichment_mode": "permissive",
+                "channel": "both",
+                "require_approval": True,
+            })
+            connection.execute(pipeline_jobs.insert().values(
+                id=job_id, lead_id=lead_id, action="process", idempotency_key=f"retry:{lead_id}:{job_id}",
+                status="PENDING", progress=0, config=config_json, attempts=0,
+            ))
+        return {"created": True, "lead_id": lead_id, "job_id": job_id, "job_status": "PENDING"}
+
+    def enqueue_bulk_delivery_jobs(
+        self, lead_ids: List[int], variation: str = "A", dry_run: bool = False,
+        scheduled_for: Optional[datetime] = None,
+    ) -> Dict:
+        """Enqueue delivery jobs for multiple specific leads with pre-send suppression checks."""
+        queued = []
+        skipped = []
+        with self.engine.begin() as connection:
+            for lead_id in lead_ids:
+                lead = connection.execute(
+                    select(leads.c.status, leads.c.email).where(leads.c.id == lead_id)
+                ).first()
+                if not lead or lead.status != LeadStatus.PENDING_APPROVAL.value:
+                    skipped.append(lead_id)
+                    continue
+                if connection.execute(
+                    select(suppression.c.email).where(func.lower(suppression.c.email) == lead.email.strip().lower())
+                ).first():
+                    skipped.append(lead_id)
+                    continue
+
+                job_id = str(uuid.uuid4())
+                key = f"delivery:{lead_id}"
+                existing = connection.execute(
+                    select(pipeline_jobs.c.id, pipeline_jobs.c.status)
+                    .where(pipeline_jobs.c.idempotency_key == key)
+                ).first()
+                if existing:
+                    skipped.append(lead_id)
+                    continue
+
+                connection.execute(pipeline_jobs.insert().values(
+                    id=job_id, lead_id=lead_id, action="deliver", idempotency_key=key,
+                    status="PENDING", progress=0,
+                    stage="Scheduled bulk outreach" if scheduled_for else "Queued for delivery",
+                    config=json.dumps({"dry_run": dry_run, "variation": variation}),
+                    attempts=0, scheduled_for=scheduled_for,
+                ))
+                queued.append({"lead_id": lead_id, "job_id": job_id})
+        return {"queued_count": len(queued), "queued": queued, "skipped": skipped}
+
+    def enqueue_all_pending_delivery(
+        self, variation: str = "A", dry_run: bool = False,
+        scheduled_for: Optional[datetime] = None,
+    ) -> Dict:
+        """Enqueue delivery jobs for all leads currently in PENDING_APPROVAL."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(leads.c.id).where(leads.c.status == LeadStatus.PENDING_APPROVAL.value)
+            ).all()
+            pending_ids = [r.id for r in rows]
+        return self.enqueue_bulk_delivery_jobs(
+            pending_ids, variation=variation, dry_run=dry_run, scheduled_for=scheduled_for
+        )
 
     def enqueue_revision_job(self, lead_id: int, variation: str, feedback: str,
                              idempotency_key: Optional[str] = None) -> Dict:
@@ -318,6 +423,26 @@ class Database:
                 config=json.dumps({"variation": variation, "feedback": feedback}), attempts=0,
             ))
         return {"created": True, "job_id": job_id, "job_status": "PENDING"}
+
+    def enqueue_retry_job(self, lead_id: int) -> Dict:
+        """Retry a failed lead by re-queueing initial processing."""
+        job_id = str(uuid.uuid4())
+        with self.engine.begin() as connection:
+            lead = connection.execute(select(leads).where(leads.c.id == lead_id)).first()
+            if not lead:
+                return {"created": False, "missing": True}
+            connection.execute(leads.update().where(leads.c.id == lead_id).values(status="NEW"))
+            config_json = json.dumps({
+                "dry_run": False,
+                "enrichment_mode": "permissive",
+                "channel": "both",
+                "require_approval": True,
+            })
+            connection.execute(pipeline_jobs.insert().values(
+                id=job_id, lead_id=lead_id, action="process", idempotency_key=f"retry:{lead_id}:{job_id}",
+                status="PENDING", progress=0, config=config_json, attempts=0,
+            ))
+        return {"created": True, "lead_id": lead_id, "job_id": job_id, "job_status": "PENDING"}
 
     def insert_lead(self, lead_data: Dict) -> int:
         """Insert a lead for seed/import tooling; return the existing ID on duplicate."""
@@ -420,7 +545,16 @@ class Database:
     def claim_next_job(self) -> Optional[Dict]:
         """Claim one queued job safely across worker processes."""
         with self.engine.begin() as connection:
-            query = select(pipeline_jobs).where(pipeline_jobs.c.status == "PENDING").order_by(
+            now = func.current_timestamp()
+            query = select(pipeline_jobs).where(
+                and_(
+                    pipeline_jobs.c.status == "PENDING",
+                    or_(
+                        pipeline_jobs.c.scheduled_for.is_(None),
+                        pipeline_jobs.c.scheduled_for <= now,
+                    )
+                )
+            ).order_by(
                 pipeline_jobs.c.created_at, pipeline_jobs.c.id
             ).limit(1)
             if self.engine.dialect.name == "postgresql":
@@ -548,11 +682,313 @@ class Database:
                 .where(pipeline_jobs.c.status == "RUNNING")
                 .order_by(pipeline_jobs.c.started_at.desc()).limit(1)).first()
         return {
-            "pipeline_running": any(status in {"PENDING", "RUNNING"} and count > 0 for status, count in rows),
+            "pipeline_running": any(status == "RUNNING" and count > 0 for status, count in rows),
             "current_stage": active.stage if active else None,
             "progress": active.progress if active else 0,
             "jobs_by_status": {status: count for status, count in rows},
         }
+
+    def schedule_followup_job(
+        self, lead_id: int, step: int = 1, delay_days: int = 3,
+        run_at: Optional[datetime] = None, dry_run: bool = False
+    ) -> Dict:
+        """Schedule a follow-up job for a lead with durable idempotency."""
+        job_id = str(uuid.uuid4())
+        key = f"followup:{lead_id}:step:{step}"
+        scheduled_for = run_at or (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=delay_days))
+        config_json = json.dumps({"step": step, "dry_run": dry_run})
+
+        with self.engine.begin() as connection:
+            lead = connection.execute(
+                select(leads.c.status, leads.c.email).where(leads.c.id == lead_id)
+            ).first()
+            if not lead:
+                return {"created": False, "missing": True}
+
+            if lead.status in {
+                LeadStatus.REPLIED.value, LeadStatus.BOUNCED.value,
+                LeadStatus.UNSUBSCRIBED.value, LeadStatus.SUPPRESSED.value,
+            }:
+                return {"created": False, "status": lead.status, "stopped": True}
+
+            if connection.execute(
+                select(suppression.c.email).where(func.lower(suppression.c.email) == lead.email.strip().lower())
+            ).first():
+                return {"created": False, "suppressed": True}
+
+            existing = connection.execute(
+                select(pipeline_jobs.c.id, pipeline_jobs.c.status)
+                .where(pipeline_jobs.c.idempotency_key == key)
+            ).first()
+            if existing:
+                return {"created": False, "job_id": existing.id, "job_status": existing.status}
+
+            connection.execute(pipeline_jobs.insert().values(
+                id=job_id, lead_id=lead_id, action="followup", idempotency_key=key,
+                status="PENDING", stage=f"Scheduled follow-up #{step}", progress=0,
+                config=config_json, attempts=0, scheduled_for=scheduled_for,
+            ))
+            if lead.status in {LeadStatus.SENT.value, LeadStatus.FOLLOWUP_SENT.value}:
+                connection.execute(
+                    update(leads).where(leads.c.id == lead_id).values(
+                        status=LeadStatus.FOLLOWUP_SCHEDULED.value, updated_at=func.current_timestamp()
+                    )
+                )
+
+        return {"created": True, "job_id": job_id, "scheduled_for": scheduled_for.isoformat(), "step": step}
+
+    def cancel_pending_followup_jobs(self, lead_id: int, reason: str = "halted") -> int:
+        """Cancel any queued/running follow-up jobs for a lead (e.g. when lead replied)."""
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(pipeline_jobs).where(
+                    and_(
+                        pipeline_jobs.c.lead_id == lead_id,
+                        pipeline_jobs.c.action == "followup",
+                        pipeline_jobs.c.status.in_(["PENDING", "RUNNING"]),
+                    )
+                ).values(
+                    status="CANCELLED",
+                    error_message=f"Follow-up cancelled: {reason}",
+                    finished_at=func.current_timestamp(),
+                    updated_at=func.current_timestamp(),
+                )
+            )
+            return result.rowcount
+
+    def has_stopping_event_or_status(self, lead_id: int) -> bool:
+        """Check if lead has replied, bounced, unsubscribed, or been suppressed."""
+        with self.engine.connect() as connection:
+            lead = connection.execute(select(leads.c.status, leads.c.email).where(leads.c.id == lead_id)).first()
+            if not lead:
+                return True
+            if lead.status in {
+                LeadStatus.REPLIED.value, LeadStatus.BOUNCED.value,
+                LeadStatus.UNSUBSCRIBED.value, LeadStatus.SUPPRESSED.value,
+            }:
+                return True
+            if connection.execute(
+                select(suppression.c.email).where(func.lower(suppression.c.email) == lead.email.strip().lower())
+            ).first():
+                return True
+            event = connection.execute(
+                select(inbound_events.c.id).where(
+                    and_(
+                        inbound_events.c.lead_id == lead_id,
+                        inbound_events.c.event_type.in_(["reply", "bounce", "unsubscribe"]),
+                    )
+                ).limit(1)
+            ).first()
+            return bool(event)
+
+    def find_lead_by_email_or_message_id(
+        self, email: str, in_reply_to: Optional[str] = None
+    ) -> Optional[Dict]:
+        """Map inbound email to a lead by In-Reply-To Message-ID or recipient email."""
+        with self.engine.connect() as connection:
+            if in_reply_to:
+                clean_ref = in_reply_to.strip().strip("<>")
+                row = connection.execute(
+                    select(outreach.c.lead_id).where(
+                        outreach.c.provider_message_id.like(f"%{clean_ref}%")
+                    ).order_by(outreach.c.id.desc()).limit(1)
+                ).first()
+                if row:
+                    lead = connection.execute(select(leads).where(leads.c.id == row.lead_id)).mappings().first()
+                    if lead:
+                        return dict(lead)
+
+            clean_email = email.strip().lower()
+            lead = connection.execute(
+                select(leads).where(func.lower(leads.c.email) == clean_email)
+                .order_by(leads.c.id.desc()).limit(1)
+            ).mappings().first()
+            return dict(lead) if lead else None
+
+    def process_inbound_event(self, event_data: Dict) -> Dict:
+        """
+        Record inbound event and automatically update lead state, suppression,
+        and follow-up schedules.
+        """
+        email = event_data.get("email", "").strip().lower()
+        subject = event_data.get("subject", "")
+        body = event_data.get("body", "")
+        headers = event_data.get("headers", {})
+        provider_event = event_data.get("event_type")
+
+        try:
+            from inbound_classifier import InboundClassifier
+        except ImportError:
+            from backend.inbound_classifier import InboundClassifier
+        classification = InboundClassifier.classify(
+            subject=subject, body=body, headers=headers, event_type=provider_event
+        )
+        intent = classification["intent"]
+
+        lead = None
+        lead_id = event_data.get("lead_id")
+        if lead_id:
+            lead = self.get_lead(lead_id)
+        if not lead and email:
+            lead = self.find_lead_by_email_or_message_id(email, in_reply_to=event_data.get("in_reply_to"))
+            if lead:
+                lead_id = lead["id"]
+
+        with self.engine.begin() as connection:
+            event_id = connection.execute(
+                inbound_events.insert().values(
+                    lead_id=lead_id,
+                    email=email,
+                    event_type=intent,
+                    provider_message_id=event_data.get("provider_message_id"),
+                    in_reply_to=event_data.get("in_reply_to"),
+                    references_header=event_data.get("references"),
+                    subject=subject,
+                    body=body[:5000] if body else None,
+                    headers=json.dumps(headers) if headers else None,
+                    classified_intent=classification["reason"],
+                ).returning(inbound_events.c.id)
+            ).scalar_one()
+
+            if lead_id:
+                if intent == InboundClassifier.REPLY:
+                    connection.execute(
+                        update(leads).where(leads.c.id == lead_id).values(
+                            status=LeadStatus.REPLIED.value, updated_at=func.current_timestamp()
+                        )
+                    )
+                    connection.execute(
+                        update(pipeline_jobs).where(
+                            and_(
+                                pipeline_jobs.c.lead_id == lead_id,
+                                pipeline_jobs.c.action == "followup",
+                                pipeline_jobs.c.status.in_(["PENDING", "RUNNING"]),
+                            )
+                        ).values(
+                            status="CANCELLED",
+                            error_message="Lead replied to outreach",
+                            finished_at=func.current_timestamp(),
+                            updated_at=func.current_timestamp(),
+                        )
+                    )
+                elif intent == InboundClassifier.BOUNCE:
+                    connection.execute(
+                        update(leads).where(leads.c.id == lead_id).values(
+                            status=LeadStatus.BOUNCED.value, updated_at=func.current_timestamp()
+                        )
+                    )
+                    connection.execute(
+                        update(pipeline_jobs).where(
+                            and_(
+                                pipeline_jobs.c.lead_id == lead_id,
+                                pipeline_jobs.c.action == "followup",
+                                pipeline_jobs.c.status.in_(["PENDING", "RUNNING"]),
+                            )
+                        ).values(
+                            status="CANCELLED",
+                            error_message="Email bounced",
+                            finished_at=func.current_timestamp(),
+                            updated_at=func.current_timestamp(),
+                        )
+                    )
+                elif intent == InboundClassifier.UNSUBSCRIBE:
+                    connection.execute(
+                        update(leads).where(leads.c.id == lead_id).values(
+                            status=LeadStatus.UNSUBSCRIBED.value, updated_at=func.current_timestamp()
+                        )
+                    )
+                    connection.execute(
+                        update(pipeline_jobs).where(
+                            and_(
+                                pipeline_jobs.c.lead_id == lead_id,
+                                pipeline_jobs.c.action == "followup",
+                                pipeline_jobs.c.status.in_(["PENDING", "RUNNING"]),
+                            )
+                        ).values(
+                            status="CANCELLED",
+                            error_message="Recipient unsubscribed",
+                            finished_at=func.current_timestamp(),
+                            updated_at=func.current_timestamp(),
+                        )
+                    )
+                elif intent == InboundClassifier.OOO:
+                    connection.execute(
+                        update(leads).where(leads.c.id == lead_id).values(
+                            status=LeadStatus.OOO.value, updated_at=func.current_timestamp()
+                        )
+                    )
+                    now_plus_5 = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5)
+                    connection.execute(
+                        update(pipeline_jobs).where(
+                            and_(
+                                pipeline_jobs.c.lead_id == lead_id,
+                                pipeline_jobs.c.action == "followup",
+                                pipeline_jobs.c.status == "PENDING",
+                            )
+                        ).values(
+                            scheduled_for=now_plus_5,
+                            stage="Follow-up paused (lead OOO)",
+                            updated_at=func.current_timestamp(),
+                        )
+                    )
+
+        if intent in {InboundClassifier.BOUNCE, InboundClassifier.UNSUBSCRIBE} and email:
+            self.add_suppression(email, reason=intent, source="inbound_webhook")
+
+        return {
+            "event_id": event_id,
+            "lead_id": lead_id,
+            "email": email,
+            "intent": intent,
+            "classification": classification,
+        }
+
+    def get_inbound_events(self, lead_id: Optional[int] = None, limit: int = 50) -> List[Dict]:
+        with self.engine.connect() as connection:
+            query = select(inbound_events)
+            if lead_id:
+                query = query.where(inbound_events.c.lead_id == lead_id)
+            rows = connection.execute(
+                query.order_by(inbound_events.c.created_at.desc()).limit(limit)
+            ).mappings().all()
+            return [dict(r) for r in rows]
+
+    def get_latest_sent_message(self, lead_id: int) -> Optional[Dict]:
+        """Get the latest sent email message record and provider_message_id for threading."""
+        with self.engine.connect() as connection:
+            query = (
+                select(
+                    messages.c.id, messages.c.subject, messages.c.body,
+                    messages.c.html_body, messages.c.variation,
+                    outreach.c.provider_message_id, outreach.c.sent_at
+                )
+                .select_from(
+                    messages.join(outreach, messages.c.id == outreach.c.message_id)
+                )
+                .where(
+                    and_(
+                        messages.c.lead_id == lead_id,
+                        outreach.c.status.in_(["SENT", "DRY_RUN"]),
+                    )
+                )
+                .order_by(outreach.c.id.desc())
+                .limit(1)
+            )
+            row = connection.execute(query).mappings().first()
+            return dict(row) if row else None
+
+    def get_followup_count(self, lead_id: int) -> int:
+        """Count how many follow-up emails have already been sent to this lead."""
+        with self.engine.connect() as connection:
+            count = connection.execute(
+                select(func.count(messages.c.id)).where(
+                    and_(
+                        messages.c.lead_id == lead_id,
+                        messages.c.variation.like("followup_%")
+                    )
+                )
+            ).scalar_one()
+            return count or 0
 
     def get_metrics(self) -> Dict:
         with self.engine.connect() as connection:
@@ -562,17 +998,24 @@ class Database:
             sent = connection.execute(select(func.count()).select_from(outreach).where(outreach.c.status == "SENT")).scalar_one()
             failed = connection.execute(select(func.count()).select_from(outreach).where(outreach.c.status == "FAILED")).scalar_one()
             active = connection.execute(select(func.count()).select_from(pipeline_jobs).where(
-                pipeline_jobs.c.status.in_(["PENDING", "RUNNING"])
+                pipeline_jobs.c.status == "RUNNING"
             )).scalar_one()
+            inbound_counts = dict(
+                connection.execute(select(inbound_events.c.event_type, func.count()).group_by(inbound_events.c.event_type)).all()
+            )
         return {
             "total_leads": int(total),
-            "leads_enriched": sum(status_counts.get(s, 0) for s in ("ENRICHED", "MESSAGED", "PENDING_APPROVAL", "SENT")),
+            "leads_enriched": sum(status_counts.get(s, 0) for s in ("ENRICHED", "MESSAGED", "PENDING_APPROVAL", "SENT", "FOLLOWUP_SCHEDULED", "FOLLOWUP_SENT")),
             "messages_generated": int(message_count), "messages_sent": int(sent),
             "messages_failed": int(failed), "status_breakdown": status_counts,
             "pipeline_running": active > 0,
+            "replied_leads": status_counts.get("REPLIED", 0),
+            "bounced_leads": status_counts.get("BOUNCED", 0),
+            "unsubscribed_leads": status_counts.get("UNSUBSCRIBED", 0),
+            "inbound_events": inbound_counts,
         }
 
     def clear_all_data(self):
         with self.engine.begin() as connection:
-            for table in (outreach, messages, enrichment, pipeline_jobs, suppression, leads):
+            for table in (inbound_events, outreach, messages, enrichment, pipeline_jobs, suppression, leads):
                 connection.execute(table.delete())

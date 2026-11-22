@@ -255,6 +255,95 @@ Rules:
             "Would a short conversation next week be useful?\n\nBest,\nThe team"
         )
 
+    @staticmethod
+    def _fallback_followup_email(lead: Dict, original_email: Dict, step: int = 1) -> str:
+        first_name = (lead.get("full_name") or "there").split()[0]
+        company = (lead.get("company_name") or "your team").strip()
+        sender_name = Config.SENDER_NAME or "The team"
+        if step == 1:
+            return (
+                f"Hi {first_name},\n\n"
+                f"I wanted to follow up briefly on my earlier note regarding your team at {company}. "
+                "Would you be open to a brief chat next week to see if our workflows align with your current priorities?\n\n"
+                f"Best,\n{sender_name}"
+            )
+        return (
+            f"Hi {first_name},\n\n"
+            f"I know things get busy. I assume practical AI workflows aren't a priority for {company} right now, "
+            "so I won't follow up further. Feel free to reach out if things change down the line.\n\n"
+            f"Best,\n{sender_name}"
+        )
+
+    def generate_followup_email(
+        self, lead: Dict, original_email: Dict, step: int = 1, product_context: str = ""
+    ) -> Dict:
+        """Generate a concise, reply-aware follow-up email adhering to strict brevity and threading rules."""
+        orig_subject = (original_email.get("subject") or "Touching base").strip()
+        subject = orig_subject if orig_subject.lower().startswith("re:") else f"Re: {orig_subject}"
+        step_instruction = (
+            "This is follow-up #1 (3-4 days after initial note). Be ultra-concise (40-70 words). "
+            "Politely check if they had a chance to consider your earlier question regarding their business challenge."
+            if step == 1 else
+            "This is follow-up #2 (final breakup email). Be very brief (30-50 words), courteous, and low-friction. "
+            "Acknowledge timing may not be right and let them know you will step back unless they want to reconnect later."
+        )
+
+        prompt = f"""Write a concise, professional B2B follow-up email to {lead.get('full_name')}, {lead.get('role_title')} at {lead.get('company_name')}.
+
+Context:
+- Recipient: {lead.get('full_name')}
+- Company: {lead.get('company_name')}
+- Stated challenge/interest: {lead.get('challenge') or lead.get('interest_area') or 'not specified'}
+- Previous email subject: {original_email.get('subject', '')}
+- Previous email body:
+{original_email.get('body', '')}
+
+Verified product context:
+{product_context or 'No additional catalog claims.'}
+
+Goal: {step_instruction}
+
+Requirements:
+- Length: 40–70 words. Keep it very short.
+- Never guilt-trip the recipient for not replying.
+- Never invent metrics, company news, or unverified claims.
+- Sign off using: Best,\n{Config.SENDER_NAME or 'The team'}
+- Return ONLY the follow-up body text (do not include Subject: or markdown headers)."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=Config.GROQ_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You write concise, polite, natural B2B sales follow-up emails. "
+                            "Output only the email body without subject line or preamble."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.4,
+                max_completion_tokens=600,
+            )
+            body = (response.choices[0].message.content or "").strip()
+            if body.lower().startswith("subject:"):
+                _, _, body = body.partition("\n\n")
+                body = body.strip()
+            if not body:
+                body = self._fallback_followup_email(lead, original_email, step)
+        except Exception as e:
+            print(f"⚠️ Follow-up generation failed: {e}")
+            body = self._fallback_followup_email(lead, original_email, step)
+
+        return {
+            "subject": subject,
+            "body": body,
+            "html_body": render_html_email(body, Config.COMPANY_NAME, lead.get("full_name", "")),
+            "word_count": len(body.split()),
+            "step": step,
+        }
+
     def generate_all_messages(self, lead: Dict, enrichment: Dict, product_context: str = "") -> Dict:
         """
         Generate all message variations for a lead.

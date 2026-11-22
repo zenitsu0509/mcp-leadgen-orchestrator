@@ -90,6 +90,20 @@ class PipelineRequest(BaseModel):
 class ApprovalRequest(BaseModel):
     dry_run: bool = Config.DRY_RUN_MODE
     variation: str = Field(default="A", pattern="^[AB]$")
+    scheduled_for: Optional[str] = None
+
+
+class BulkApprovalRequest(BaseModel):
+    lead_ids: list[int]
+    variation: str = Field(default="A", pattern="^[AB]$")
+    dry_run: bool = Config.DRY_RUN_MODE
+    scheduled_for: Optional[str] = None
+
+
+class ApproveAllRequest(BaseModel):
+    variation: str = Field(default="A", pattern="^[AB]$")
+    dry_run: bool = Config.DRY_RUN_MODE
+    scheduled_for: Optional[str] = None
 
 
 class RevisionRequest(BaseModel):
@@ -191,14 +205,72 @@ async def approve_email(lead_id: int, request: ApprovalRequest):
     lead = db.get_lead(lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    sched_time = None
+    if request.scheduled_for:
+        try:
+            from datetime import datetime
+            sched_time = datetime.fromisoformat(request.scheduled_for.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid scheduled_for timestamp: {e}")
     job = db.enqueue_delivery_job(
-        lead_id, dry_run=request.dry_run, variation=request.variation
+        lead_id, dry_run=request.dry_run, variation=request.variation, scheduled_for=sched_time,
     )
     if job.get("missing"):
         raise HTTPException(status_code=404, detail="Lead not found")
     if not job.get("created") and not job.get("job_id"):
         raise HTTPException(status_code=409, detail=f"Lead cannot be approved from status {job.get('status')}")
     return {"message": "Approved delivery queued", **job}
+
+
+@app.post("/leads/{lead_id}/retry", status_code=202, dependencies=[Depends(require_api_token)])
+async def retry_lead(lead_id: int):
+    """Re-queue a failed or stuck lead for processing."""
+    job = db.enqueue_retry_job(lead_id)
+    if job.get("missing"):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return {"message": "Lead re-queued for processing", **job}
+
+
+@app.post("/leads/bulk-approve", status_code=202, dependencies=[Depends(require_api_token)])
+async def bulk_approve_leads(request: BulkApprovalRequest):
+    """Bulk approve and send/schedule outreach emails to specifically selected leads."""
+    if not request.lead_ids:
+        raise HTTPException(status_code=422, detail="No lead IDs provided")
+
+    sched_time = None
+    if request.scheduled_for:
+        try:
+            from datetime import datetime
+            sched_time = datetime.fromisoformat(request.scheduled_for.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid scheduled_for timestamp: {e}")
+
+    result = db.enqueue_bulk_delivery_jobs(
+        lead_ids=request.lead_ids,
+        variation=request.variation,
+        dry_run=request.dry_run,
+        scheduled_for=sched_time,
+    )
+    return {"message": f"Queued {result['queued_count']} deliveries", **result}
+
+
+@app.post("/leads/approve-all", status_code=202, dependencies=[Depends(require_api_token)])
+async def approve_all_pending_leads(request: ApproveAllRequest):
+    """Approve and send/schedule outreach emails to all leads currently awaiting review."""
+    sched_time = None
+    if request.scheduled_for:
+        try:
+            from datetime import datetime
+            sched_time = datetime.fromisoformat(request.scheduled_for.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid scheduled_for timestamp: {e}")
+
+    result = db.enqueue_all_pending_delivery(
+        variation=request.variation,
+        dry_run=request.dry_run,
+        scheduled_for=sched_time,
+    )
+    return {"message": f"Queued {result['queued_count']} deliveries for all pending leads", **result}
 
 
 @app.post("/leads/{lead_id}/revise", status_code=202, dependencies=[Depends(require_api_token)])
@@ -245,6 +317,121 @@ async def suppress_email(payload: dict):
         raise HTTPException(status_code=422, detail="A valid email is required")
     db.add_suppression(email, reason, source="api")
     return {"status": "suppressed"}
+
+
+class InboundEmailPayload(BaseModel):
+    email: Optional[str] = ""
+    sender: Optional[str] = Field(default="", alias="from")
+    recipient: Optional[str] = Field(default="", alias="to")
+    subject: Optional[str] = ""
+    body: Optional[str] = Field(default="", alias="text")
+    message_id: Optional[str] = Field(default="", alias="Message-ID")
+    in_reply_to: Optional[str] = Field(default="", alias="In-Reply-To")
+    references: Optional[str] = Field(default="", alias="References")
+    headers: Optional[dict] = Field(default_factory=dict)
+    event_type: Optional[str] = None
+    lead_id: Optional[int] = None
+
+    class Config:
+        populate_by_name = True
+
+
+@app.post("/webhooks/inbound-email", status_code=200)
+async def inbound_email_webhook(payload: dict):
+    """
+    Ingest inbound reply, bounce, or out-of-office message from mailboxes or ESP webhooks.
+    Automatically classifies intent and updates lead state and suppression.
+    """
+    email = str(payload.get("email") or payload.get("from") or payload.get("sender") or "").strip()
+    # Extract clean email if formatted as "Name <email@example.com>"
+    if "<" in email and ">" in email:
+        email = email.split("<")[1].split(">")[0].strip()
+
+    subject = str(payload.get("subject") or "")
+    body = str(payload.get("text") or payload.get("body") or payload.get("stripped-text") or "")
+    in_reply_to = str(payload.get("In-Reply-To") or payload.get("in_reply_to") or "")
+    references = str(payload.get("References") or payload.get("references") or "")
+    provider_msg_id = str(payload.get("Message-ID") or payload.get("message_id") or "")
+    headers = payload.get("headers") or {}
+    lead_id = payload.get("lead_id")
+
+    event_data = {
+        "email": email,
+        "lead_id": lead_id,
+        "subject": subject,
+        "body": body,
+        "in_reply_to": in_reply_to,
+        "references": references,
+        "provider_message_id": provider_msg_id,
+        "headers": headers,
+        "event_type": payload.get("event_type") or payload.get("event"),
+    }
+    result = db.process_inbound_event(event_data)
+    return {"message": "Inbound event processed", **result}
+
+
+@app.post("/webhooks/events", status_code=200)
+async def provider_event_webhook(payload: dict):
+    """
+    Ingest delivery/bounce/unsubscribe events from ESP providers (SendGrid, Mailgun, Postmark, SES).
+    """
+    email = str(payload.get("email") or payload.get("recipient") or "").strip()
+    event_type = str(payload.get("event") or payload.get("event_type") or payload.get("RecordType") or "").lower()
+    event_data = {
+        "email": email,
+        "lead_id": payload.get("lead_id"),
+        "event_type": event_type,
+        "subject": payload.get("subject", ""),
+        "body": payload.get("reason", "") or payload.get("description", ""),
+        "provider_message_id": payload.get("sg_message_id") or payload.get("message_id"),
+        "headers": payload.get("headers") or {},
+    }
+    result = db.process_inbound_event(event_data)
+    return {"message": "Provider event processed", **result}
+
+
+@app.get("/inbound-events", dependencies=[Depends(require_api_token)])
+async def list_inbound_events(lead_id: Optional[int] = Query(default=None), limit: int = Query(default=50, ge=1, le=200)):
+    return {"events": db.get_inbound_events(lead_id=lead_id, limit=limit)}
+
+
+class FollowupRequest(BaseModel):
+    step: int = Field(default=1, ge=1, le=3)
+    delay_days: int = Field(default=0, ge=0, le=30)
+    dry_run: Optional[bool] = None
+
+
+@app.post("/leads/{lead_id}/followup", status_code=202, dependencies=[Depends(require_api_token)])
+async def trigger_followup(lead_id: int, request: FollowupRequest):
+    """Schedule or immediately trigger a follow-up email for an outreach-completed lead."""
+    lead = db.get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    stopping = {LeadStatus.REPLIED.value, LeadStatus.BOUNCED.value, LeadStatus.UNSUBSCRIBED.value, LeadStatus.SUPPRESSED.value}
+    if lead["status"] in stopping:
+        raise HTTPException(status_code=409, detail=f"Cannot follow up with lead in status {lead['status']}")
+
+    if db.is_suppressed(lead["email"]):
+        raise HTTPException(status_code=409, detail="Lead email is in the suppression list")
+
+    dry_run = request.dry_run if request.dry_run is not None else Config.DRY_RUN_MODE
+    job = db.schedule_followup_job(
+        lead_id=lead_id,
+        step=request.step,
+        delay_days=request.delay_days,
+        dry_run=dry_run,
+    )
+    if not job.get("created"):
+        raise HTTPException(status_code=409, detail=f"Follow-up not scheduled (status: {job.get('status') or 'already queued'})")
+    return {"message": f"Follow-up #{request.step} queued", **job}
+
+
+@app.post("/leads/{lead_id}/cancel-followup", dependencies=[Depends(require_api_token)])
+async def cancel_followup(lead_id: int):
+    """Cancel any pending follow-up jobs for a lead."""
+    cancelled = db.cancel_pending_followup_jobs(lead_id, reason="Manual operator cancellation")
+    return {"message": f"Cancelled {cancelled} follow-up jobs for lead {lead_id}", "cancelled_count": cancelled}
 
 
 if __name__ == "__main__":

@@ -300,6 +300,27 @@ class RAGEngine:
                 combined.append(product_copy)
                 known.add(name_casefold)
 
+        # Also include all offerings from any product domain referenced in the lead or review context
+        text_tokens = set(re.findall(r"\w+", normalized_text))
+        text_stems = {t.rstrip("s") for t in text_tokens}
+        for domain in getattr(self, "catalog", {}).get("domains", []):
+            d_name = domain.get("name", "").casefold()
+            d_id = domain.get("id", "").casefold()
+            d_tokens = set(re.findall(r"\w+", d_name + " " + d_id))
+            significant_stems = {
+                t.rstrip("s") for t in d_tokens
+                if len(t) >= 4 and t not in {"models", "services", "domain"}
+            }
+            if significant_stems & text_stems:
+                for product in getattr(self, "products", []):
+                    if product.get("domain_id") == domain.get("id"):
+                        name_casefold = str(product.get("name", "")).casefold()
+                        if name_casefold not in known:
+                            p_copy = product.copy()
+                            p_copy.setdefault("relevance_score", 0.95)
+                            combined.append(p_copy)
+                            known.add(name_casefold)
+
         return combined
 
 

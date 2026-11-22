@@ -72,29 +72,38 @@ class OutreachService:
         body: str,
         lead_name: str,
         html_body: Optional[str] = None,
-        retry_count: int = 0
+        retry_count: int = 0,
+        in_reply_to: Optional[str] = None,
+        references: Optional[str] = None,
     ) -> Dict:
         """
-        Send an email with retry logic.
+        Send an email with retry logic and threading support.
         
         Args:
             to_email: Recipient email
             subject: Email subject
             body: Email body
             lead_name: Lead name for logging
+            html_body: Optional HTML formatted body
             retry_count: Current retry attempt
+            in_reply_to: Optional Message-ID of previous email for threading
+            references: Optional References header for threading
         
         Returns:
             Result dictionary with status and message
         """
         if self.dry_run:
+            generated_id = make_msgid()
             print(f"📧 [DRY RUN] Email to {lead_name} ({to_email})")
             print(f"   Subject: {subject}")
+            if in_reply_to:
+                print(f"   In-Reply-To: {in_reply_to}")
             print(f"   Body preview: {body[:100]}...")
             return {
                 "status": "success",
                 "message": "Dry run - email logged",
                 "channel": "email",
+                "provider_message_id": generated_id,
                 "timestamp": datetime.now().isoformat()
             }
 
@@ -121,6 +130,10 @@ class OutreachService:
             if reply_to:
                 msg["Reply-To"] = reply_to
             msg["Message-ID"] = make_msgid()
+            if in_reply_to:
+                msg["In-Reply-To"] = in_reply_to
+            if references or in_reply_to:
+                msg["References"] = references or in_reply_to
             msg.set_content(body)
             if html_body:
                 msg.add_alternative(html_body, subtype="html")

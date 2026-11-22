@@ -28,6 +28,12 @@ Human review is enabled by default. The dashboard shows both variants with a sel
 
 The Compose stack runs PostgreSQL, an Alembic migration job, FastAPI, one worker, and the Next.js dashboard. It is intended as a reproducible single-host baseline. Configure TLS at an ingress/reverse proxy and manage backups, credentials, monitoring, retention, and recovery for a real deployment.
 
-## Follow-up milestone boundary
+## Reply-Aware Follow-ups & Inbound Event Handling
 
-Reply detection and cron-based follow-ups are not implemented. Manual suppression and pre-send suppression checks are present, but they do not infer that a lead replied. A safe follow-up service should consume mailbox/webhook events, classify replies/bounces/unsubscribes, persist a normalized conversation state, and recheck that state immediately before scheduling and sending every follow-up.
+Reply detection, bounce/unsubscribe handling, and safe scheduled follow-ups are implemented:
+- **Inbound Event Ingestion**: `POST /webhooks/inbound-email` and `POST /webhooks/events` ingest mailbox replies and ESP delivery/bounce events.
+- **Classification Engine**: `InboundClassifier` parses headers (`Auto-Submitted`, `X-Autoreply`), subjects, and bodies to classify incoming events as `REPLY`, `BOUNCE`, `UNSUBSCRIBE`, or `OOO`.
+- **Automatic State Transitions & Suppression**: Inbound human replies transition the lead to `REPLIED` and cancel all scheduled follow-ups. Bounces and unsubscribes transition the lead, write immediately to the `suppression` table, and cancel follow-ups. Out-of-office notes postpone follow-ups.
+- **Atomic Pre-Send Verification**: At time of send, the worker verifies that the lead has not entered a stopping state, is not on the suppression list, and has received no stopping inbound events before dispatching any follow-up.
+- **Thread Continuity**: Sent messages record `provider_message_id`. Follow-up emails set standard `In-Reply-To` and `References` headers and thread `Re:` subjects.
+- **Backup & Recovery**: `backend/backup.py` provides zero-downtime atomic SQLite snapshots and gzip-compressed PostgreSQL dumps with retention pruning.
