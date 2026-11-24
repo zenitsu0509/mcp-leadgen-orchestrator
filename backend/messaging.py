@@ -17,10 +17,9 @@ class MessagePersonalizer:
     def __init__(self):
         """Initialize message personalizer with Groq API"""
         api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY not found in environment variables")
-        
-        self.client = Groq(api_key=api_key)
+        # Follow-up generation already has a deterministic fallback. Keep the
+        # client optional so dry-run/test environments can exercise that path.
+        self.client = Groq(api_key=api_key) if api_key else None
     
     def _generate_email_prompt(self, lead: Dict, enrichment: Dict, variation: str, product_context: str = "") -> str:
         """Generate prompt for email personalization, optionally grounded in product context"""
@@ -182,6 +181,8 @@ Requirements:
     def revise_email(self, lead: Dict, original: Dict, feedback: str,
                      product_context: str = "") -> Dict:
         """Rewrite one draft using reviewer notes while retaining factual guardrails."""
+        if self.client is None:
+            raise RuntimeError("GROQ_API_KEY is required for reviewer-driven email rewrites")
         prompt = f"""Revise this B2B email draft using the reviewer's requested changes.
 
 Recipient and company facts:
@@ -310,31 +311,34 @@ Requirements:
 - Sign off using: Best,\n{Config.SENDER_NAME or 'The team'}
 - Return ONLY the follow-up body text (do not include Subject: or markdown headers)."""
 
-        try:
-            response = self.client.chat.completions.create(
-                model=Config.GROQ_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You write concise, polite, natural B2B sales follow-up emails. "
-                            "Output only the email body without subject line or preamble."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.4,
-                max_completion_tokens=600,
-            )
-            body = (response.choices[0].message.content or "").strip()
-            if body.lower().startswith("subject:"):
-                _, _, body = body.partition("\n\n")
-                body = body.strip()
-            if not body:
-                body = self._fallback_followup_email(lead, original_email, step)
-        except Exception as e:
-            print(f"⚠️ Follow-up generation failed: {e}")
+        if self.client is None:
             body = self._fallback_followup_email(lead, original_email, step)
+        else:
+            try:
+                response = self.client.chat.completions.create(
+                    model=Config.GROQ_MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You write concise, polite, natural B2B sales follow-up emails. "
+                                "Output only the email body without subject line or preamble."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.4,
+                    max_completion_tokens=600,
+                )
+                body = (response.choices[0].message.content or "").strip()
+                if body.lower().startswith("subject:"):
+                    _, _, body = body.partition("\n\n")
+                    body = body.strip()
+                if not body:
+                    body = self._fallback_followup_email(lead, original_email, step)
+            except Exception as e:
+                print(f"⚠️ Follow-up generation failed: {e}")
+                body = self._fallback_followup_email(lead, original_email, step)
 
         return {
             "subject": subject,
